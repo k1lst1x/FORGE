@@ -31,17 +31,18 @@ from __future__ import annotations
 
 import functools
 import logging
+import threading
 import time
 import traceback
 import uuid
 from pathlib import Path
 
-from forge import audit as audit_mod
-from forge import brightdata, config, llm, planner, portal, store, telemetry
-from forge import triage as triage_mod
-from forge import vcs
-from forge import verify as verify_mod
-from forge.models import (
+from app import audit as audit_mod
+from app import brightdata, config, llm, planner, portal, store, telemetry
+from app import triage as triage_mod
+from app import vcs
+from app import verify as verify_mod
+from app.models import (
     DUPLICATE,
     FALSE_POSITIVE,
     INTAKE_BRIEF,
@@ -112,6 +113,32 @@ def _tag(span, cr: ChangeRequest) -> None:
             pass
 
 
+def _run_with_timeout(fn, *args, timeout_seconds: float | None = None, **kwargs):
+    """Protect a stage from blocking forever; fail the run without hanging the control loop."""
+    timeout_seconds = float(timeout_seconds if timeout_seconds is not None else config.FORGE_RUN_TIMEOUT_SECONDS)
+    if timeout_seconds <= 0:
+        return fn(*args, **kwargs)
+
+    result = {}
+    error = {}
+
+    def worker():
+        try:
+            result["value"] = fn(*args, **kwargs)
+        except BaseException as exc:  # pragma: no cover - forwarded while the run is marked failed
+            error["exc"] = exc
+
+    thread = threading.Thread(target=worker, daemon=True)
+    thread.start()
+    thread.join(timeout=timeout_seconds)
+
+    if thread.is_alive():
+        raise TimeoutError(f"run exceeded wall-clock timeout of {timeout_seconds}s")
+    if "exc" in error:
+        raise error["exc"]
+    return result.get("value")
+
+
 def _stage(name: str, span_name: str | None = None):
     """Wrap a step: its own span, its own Port update, its own duration metric.
 
@@ -128,11 +155,12 @@ def _stage(name: str, span_name: str | None = None):
                 _tag(span, cr)
                 _upsert(cr)
                 try:
-                    result = fn(cr, span, *args, **kwargs)
+                    result = _run_with_timeout(fn, cr, span, *args, timeout_seconds=config.FORGE_RUN_TIMEOUT_SECONDS, **kwargs)
                     cr = result if isinstance(result, ChangeRequest) else cr
                 except Exception as exc:
                     cr.outcome = OUTCOME_ERROR
                     cr.status = "failed"
+                    cr.finished_at = time.time()
                     if span is not None:
                         try:
                             span.record_exception(exc)
@@ -472,6 +500,11 @@ def verify(cr: ChangeRequest, span) -> ChangeRequest:
         span.set_attribute("verify.findings_closed", len(result.findings_closed))
         span.set_attribute("verify.findings_introduced", len(result.findings_introduced))
         span.set_attribute("verify.evidence", (result.evidence or "")[:400])
+        if not result.ok:
+            span.add_event(
+                "forge.verify.rejected",
+                {"reason": (result.evidence or "verification failed")[:400]},
+            )
     _safe(
         telemetry.counter,
         "forge_fix_attempts_total",
@@ -594,11 +627,19 @@ def run(cr: ChangeRequest) -> ChangeRequest:
     function IS the architecture claim -- there is no branch on intake type
     anywhere in it.
     """
+    started_monotonic = time.monotonic()
+    run_timeout_seconds = float(config.FORGE_RUN_TIMEOUT_SECONDS)
     with telemetry.stage_span("forge.run", cr.run_id) as root:
         _tag(root, cr)
         try:
+            if time.monotonic() - started_monotonic >= run_timeout_seconds:
+                raise TimeoutError(f"run exceeded wall-clock timeout of {run_timeout_seconds}s")
             cr = intake(cr)
+            if time.monotonic() - started_monotonic >= run_timeout_seconds:
+                raise TimeoutError(f"run exceeded wall-clock timeout of {run_timeout_seconds}s")
             cr = context(cr)
+            if time.monotonic() - started_monotonic >= run_timeout_seconds:
+                raise TimeoutError(f"run exceeded wall-clock timeout of {run_timeout_seconds}s")
             cr = triage(cr)
 
             # The decline path. A clean early return: no PLAN, no ACT, no
@@ -608,6 +649,8 @@ def run(cr: ChangeRequest) -> ChangeRequest:
                 return close_out(cr)
 
             while True:
+                if time.monotonic() - started_monotonic >= run_timeout_seconds:
+                    raise TimeoutError(f"run exceeded wall-clock timeout of {run_timeout_seconds}s")
                 try:
                     cr = plan(cr)
                 except (planner.PlannerUnavailable, llm.BudgetExceeded) as exc:
@@ -637,6 +680,8 @@ def run(cr: ChangeRequest) -> ChangeRequest:
                 cr.context["verify_failure"] = cr.verify.get("evidence")
                 log.info("VERIFY failed for %s, retry %s of %s", cr.run_id, cr.attempts, MAX_PLAN_ATTEMPTS - 1)
 
+            if time.monotonic() - started_monotonic >= run_timeout_seconds:
+                raise TimeoutError(f"run exceeded wall-clock timeout of {run_timeout_seconds}s")
             cr = gate(cr)
             if not cr.approved:
                 cr.outcome = OUTCOME_REJECTED
@@ -650,6 +695,7 @@ def run(cr: ChangeRequest) -> ChangeRequest:
             cr.outcome = OUTCOME_ERROR
             cr.status = "failed"
             cr.finished_at = time.time()
+            cr.context["error"] = str(exc)
             if root is not None:
                 try:
                     root.record_exception(exc)

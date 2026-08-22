@@ -21,9 +21,9 @@ from fastapi import BackgroundTasks, FastAPI, HTTPException
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 
-from forge import approvals, config, scheduler, store
-from forge.intake import router as intake_router
-from forge.status import router as status_router
+from app import approvals, config, scheduler, store
+from app.intake import router as intake_router
+from app.status import router as status_router
 
 
 
@@ -55,7 +55,7 @@ class FindingIn(BaseModel):
 
 
 def _run_finding(finding: dict) -> None:
-    from forge import engine
+    from app import engine
 
     try:
         engine.run_from_finding(finding)
@@ -96,7 +96,7 @@ async def intake_finding(payload: dict, background: BackgroundTasks):
 @app.get("/health")
 def health():
     audit_state = scheduler.state()
-    from forge import llm, telemetry
+    from app import llm, telemetry
 
     return {
         "ok": True,

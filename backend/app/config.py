@@ -62,6 +62,7 @@ FORGE_CONTROL_URL = os.getenv("FORGE_CONTROL_URL", f"http://localhost:{FORGE_CON
 AUDIT_INTERVAL_SECONDS = _int("AUDIT_INTERVAL_SECONDS", 300)
 AUDIT_ROUTES = [r.strip() for r in os.getenv("AUDIT_ROUTES", "/,/products,/security").split(",") if r.strip()]
 MAX_PLAN_ATTEMPTS = _int("FORGE_MAX_PLAN_ATTEMPTS", 3)
+FORGE_RUN_TIMEOUT_SECONDS = float(os.getenv("FORGE_RUN_TIMEOUT_SECONDS", "900"))
 RELEASE_SETTLE_SECONDS = float(os.getenv("FORGE_RELEASE_SETTLE_SECONDS", "0"))
 PORT_GATE_MODE = os.getenv("PORT_GATE_MODE", "poll")
 ENGINE_RAISES = os.getenv("FORGE_ENGINE_RAISE", "0") in ("1", "true", "True")

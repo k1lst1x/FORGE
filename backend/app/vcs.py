@@ -23,7 +23,7 @@ from pathlib import Path
 
 import httpx
 
-from forge import config
+from app import config
 
 log = logging.getLogger("forge.vcs")
 

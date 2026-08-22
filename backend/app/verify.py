@@ -47,8 +47,8 @@ import time
 from contextlib import contextmanager
 from pathlib import Path
 
-from forge import config
-from forge.models import VerifyResult
+from app import config
+from app.models import VerifyResult
 
 log = logging.getLogger("forge.verify")
 
@@ -328,7 +328,7 @@ def _baseline(routes) -> object | None:
     Tolerant on purpose: a missing baseline tightens the rule in compare()
     rather than failing the run outright.
     """
-    from forge import audit as audit_mod
+    from app import audit as audit_mod
 
     try:
         return audit_mod.run_audit(config.PULSE_BASE_URL, routes)
@@ -339,7 +339,7 @@ def _baseline(routes) -> object | None:
 
 def verify(changeset, cr) -> VerifyResult:
     """Tests, then a fresh audit. Both must pass for a change to reach a human."""
-    from forge import audit as audit_mod
+    from app import audit as audit_mod
 
     changeset = list(changeset or [])
     routes = routes_under_test(changeset, cr)

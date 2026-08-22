@@ -21,8 +21,8 @@ import time
 
 import httpx
 
-from forge import audit, config, store, telemetry
-from forge.models import GRADE_VALUE, SILVER
+from app import audit, config, store, telemetry
+from app.models import GRADE_VALUE, SILVER
 
 log = logging.getLogger("forge.scheduler")
 
@@ -111,7 +111,7 @@ async def _open_fix_runs(result, dropped: list[str]) -> None:
     # Do not spend a model call on a check the policy already says must be
     # escalated -- triage would only reach the same conclusion, for money.
     try:
-        from forge import audit as audit_mod
+        from app import audit as audit_mod
 
         by_id = audit_mod.load_policy()["by_id"]
         candidates = [f for f in candidates

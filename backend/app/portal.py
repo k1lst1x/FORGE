@@ -22,7 +22,7 @@ import time
 
 import httpx
 
-from forge import config, store
+from app import config, store
 
 log = logging.getLogger("forge.portal")
 
@@ -171,14 +171,14 @@ def request_approval(cr) -> str:
         BLUEPRINT_RUN, cr.run_id, cr.title[:120],
         {"status": "awaiting_approval", "stage": "GATE", "pr_url": cr.pr_url or ""},
     )
-    from forge import approvals
+    from app import approvals
 
     approvals.open_request(cr, approval_id)
     return approval_id
 
 
 def wait_for_approval(approval_id: str) -> bool:
-    from forge import approvals
+    from app import approvals
 
     return approvals.wait(approval_id)
 

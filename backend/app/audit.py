@@ -37,8 +37,8 @@ import httpx
 import yaml
 from bs4 import BeautifulSoup
 
-from forge import config, telemetry
-from forge.models import GRADE_VALUE, AuditResult, grade_for
+from app import config, telemetry
+from app.models import GRADE_VALUE, AuditResult, grade_for
 
 log = logging.getLogger("forge.audit")
 

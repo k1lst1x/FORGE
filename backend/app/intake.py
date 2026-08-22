@@ -6,7 +6,7 @@ forge/intake.py -- the front door.
 api.py is Damir's and does not exist yet, so this ships as a router he mounts
 in one line rather than as a second app competing with his:
 
-    from forge.intake import router
+    from app.intake import router
     app.include_router(router)
 
 It follows the contract he specified: return immediately and process in a
@@ -30,7 +30,7 @@ import logging
 from fastapi import APIRouter, BackgroundTasks
 from pydantic import BaseModel, Field
 
-from forge.models import new_run_id
+from app.models import new_run_id
 
 log = logging.getLogger("forge.intake")
 
@@ -53,7 +53,7 @@ class Accepted(BaseModel):
 
 def _run_brief(description: str, title: str | None, run_id: str) -> None:
     """The background half. Imported late so the web layer starts fast."""
-    from forge import engine
+    from app import engine
 
     try:
         engine.run_from_brief(description, title=title, run_id=run_id)

@@ -37,8 +37,8 @@ import logging
 import os
 import time
 
-from forge import llm
-from forge.models import ChangeSet
+from app import llm
+from app.models import ChangeSet
 
 log = logging.getLogger("forge.planner")
 
@@ -153,7 +153,7 @@ def _policy_requirements(policy) -> str:
         checks = policy.get("checks")
     if checks is None:
         try:
-            from forge import audit
+            from app import audit
 
             checks = audit.load_policy().get("checks")
         except Exception as exc:
@@ -213,7 +213,7 @@ def _call_model(user: str, attempt: int, client=None) -> tuple[dict, dict]:
     where hidden reasoning consumed the whole budget and the content came back
     empty -- which looks like a successful call and returns nothing.
     """
-    from forge import telemetry
+    from app import telemetry
 
     if client is None and not _credentials_available():
         raise PlannerUnavailable(
@@ -278,7 +278,7 @@ def _accept(data: dict, usage: dict, attempt: int, file_contents=None) -> Change
       * a changeset with no test file is recorded as such rather than passed
         off as complete
     """
-    from forge import telemetry
+    from app import telemetry
 
     accepted, rejected = [], []
     for entry in data.get("files", []):

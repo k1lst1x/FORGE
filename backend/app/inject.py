@@ -44,7 +44,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urlparse
 
-from forge import config
+from app import config
 
 log = logging.getLogger("forge.inject")
 
@@ -123,7 +123,7 @@ def _guard(path: Path) -> Path:
 
 def _record(mode: int, detail: dict) -> None:
     """Write it down, and put it on the trace."""
-    from forge import telemetry
+    from app import telemetry
 
     state = _load_state()
     entry = {"mode": mode, "at": _now(), **detail}

@@ -45,7 +45,7 @@ def _configure_signoz() -> bool:
     dependency that fails to install on some machines, and the fallback costs
     us nothing here.
     """
-    from forge import config
+    from app import config
 
     if not (_OTEL and config.SIGNOZ_INGESTION_KEY):
         return False

@@ -42,8 +42,8 @@ import logging
 import os
 import time
 
-from forge import llm
-from forge.models import (
+from app import llm
+from app.models import (
     AUTOFIX_SAFE,
     DUPLICATE,
     FALSE_POSITIVE,
@@ -156,7 +156,7 @@ def _policy_action(check_id: str | None) -> str | None:
     if not check_id:
         return None
     try:
-        from forge import audit
+        from app import audit
 
         spec = audit.load_policy()["by_id"].get(check_id)
         return spec.get("action") if spec else None
@@ -249,7 +249,7 @@ def _call_model(system: str, user: str, client=None) -> tuple[dict, dict]:
     Anthropic; on OpenAI it becomes json_object mode and _reconcile catches the
     rest. The system prompt still says JSON only either way.
     """
-    from forge import telemetry
+    from app import telemetry
 
     with telemetry.stage_span("forge.triage.model_call", "triage") as span:
         result = llm.generate(

@@ -14,7 +14,7 @@ import threading
 import time
 from pathlib import Path
 
-from forge import config
+from app import config
 
 log = logging.getLogger("forge.store")
 

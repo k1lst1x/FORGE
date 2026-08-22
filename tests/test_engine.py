@@ -7,6 +7,7 @@ a judge about the engine, so they must keep passing as the stubs turn real.
 from __future__ import annotations
 
 import sys
+import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -124,6 +125,24 @@ FINDING = {
 
 def _finding(**overrides):
     return dict(FINDING, **overrides)
+
+
+def test_a_hung_step_times_out_and_marks_the_run_failed(monkeypatch):
+    monkeypatch.setattr("forge.config.FORGE_RUN_TIMEOUT_SECONDS", 0.01)
+
+    def slow_plan(*args, **kwargs):
+        time.sleep(0.25)
+        return ChangeSet(
+            [{"path": "pulse/main.py", "content": "app = FastAPI()", "reason": "slow plan"}],
+            rationale="slow plan",
+        )
+
+    monkeypatch.setattr("forge.engine.planner.plan_fix", slow_plan)
+    monkeypatch.setattr("forge.engine.planner.plan_feature", slow_plan)
+
+    cr = engine.run_from_finding(_finding())
+    assert cr.status == "failed"
+    assert cr.outcome == "error"
 
 
 def test_a_finding_runs_end_to_end_and_merges():

@@ -28,7 +28,7 @@ from pathlib import Path
 import httpx
 from bs4 import BeautifulSoup
 
-from forge import config
+from app import config
 
 log = logging.getLogger("forge.brightdata")
 
