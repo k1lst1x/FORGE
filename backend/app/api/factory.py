@@ -43,14 +43,25 @@ def list_findings() -> list[Finding]:
 @router.post("/runs/{run_id}/approve", response_model=FactoryRunDetail)
 def approve_run(run_id: str) -> FactoryRunDetail:
     try:
-        store.get_run(run_id)
+        run = store.get_run(run_id)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="Factory run not found") from exc
 
+    merged = False
+    if run.pr_url:
+        from app.factory import vcs
+
+        merged = vcs.merge_pr(run.pr_url)
+
+    next_gate = (
+        "Approved by human operator; release may proceed."
+        if merged
+        else "Approved by human operator; merge stub skipped because no PR URL was recorded."
+    )
     store.update_run(
         run_id,
         status=FactoryRunStatus.released,
-        next_gate="Approved by human operator; release may proceed.",
+        next_gate=next_gate,
         outcome="approved_by_human",
     )
     return store.get_run_detail(run_id)
@@ -63,6 +74,12 @@ def reject_run(run_id: str) -> FactoryRunDetail:
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="Factory run not found") from exc
 
+    from app.factory import portal
+
+    portal.escalate(
+        type("ChangeRequestStub", (), {"run_id": run_id, "title": "Human rejection"})(),
+        "Human operator rejected the generated patch.",
+    )
     store.update_run(
         run_id,
         status=FactoryRunStatus.escalated,

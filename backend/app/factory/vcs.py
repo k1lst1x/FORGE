@@ -28,5 +28,6 @@ def open_pr(branch: str, title: str, body: str) -> str:
 
 
 def merge_pr(pr_url: str) -> bool:
-    _ = pr_url
+    if not pr_url:
+        return False
     return True
