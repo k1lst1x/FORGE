@@ -195,6 +195,13 @@ def routes_under_test(changeset, cr) -> list[str]:
     for change in changeset:
         if change.get("path", "").startswith("pulse/"):
             routes.extend(ROUTE_DECORATOR.findall(change.get("content") or ""))
+
+    # A guard the factory just wrote for /.env or /admin is a route in the
+    # source, but it is not a PAGE. Auditing it as one produces six header
+    # findings against a path whose whole job is to refuse -- and those persist
+    # into the catalog as graded pages. Drop them.
+    blocked = set(_exposure_paths())
+    routes = [r for r in routes if r not in blocked]
     # "/" carries the app-level checks: exposed paths, stack traces, docs.
     if "/" not in routes:
         routes.append("/")
@@ -206,13 +213,24 @@ def routes_under_test(changeset, cr) -> list[str]:
     return ordered
 
 
+def _exposure_paths() -> set:
+    """Paths the policy probes for exposure. Never pages in their own right."""
+    try:
+        from forge import audit
+
+        return set(audit.load_policy().get("exposure_paths") or [])
+    except Exception:
+        return {"/.env", "/.git/config", "/admin", "/debug", "/docs"}
+
+
 def new_routes(changeset) -> list[str]:
     """Routes this changeset introduces -- a feature run must land these clean."""
     found: list[str] = []
     for change in changeset:
         if change.get("path", "").startswith("pulse/"):
             found.extend(ROUTE_DECORATOR.findall(change.get("content") or ""))
-    return found
+    blocked = _exposure_paths()
+    return [r for r in found if r not in blocked]
 
 
 # --------------------------------------------------------------------------

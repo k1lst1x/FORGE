@@ -1,0 +1,45 @@
+# watchers/books.yaml -- the Pulse product feed.
+#
+# Version-controlled on purpose: the collector id and the field contract live
+# in git, not in a dashboard or a shell history.
+
+name: books
+description: Competitor product listing that Pulse renders on / and /products
+
+target_url: https://books.toscrape.com/
+collector_id: c_mt4y9wy817vo82ojy8          # pinned; see CLAUDE.md
+
+output: data/books.json
+
+# Every row must carry these, or the result is rejected and the previous
+# good data is kept. This is the contract rule 3 in CLAUDE.md enforces.
+fields:
+  - name: name
+    type: string
+    required: true
+  - name: price
+    type: number
+    required: true
+  - name: currency
+    type: string
+    required: false
+    default: GBP
+  - name: availability
+    type: string
+    required: false
+    default: unknown
+    one_of: [in_stock, out_of_stock, unknown]
+  - name: rating
+    type: string
+    required: false
+
+validation:
+  min_rows: 1
+  max_age_seconds: 3600        # older than this, Pulse labels the data stale
+
+run:
+  timeout_seconds: 600
+  # NOT sync: this listing exceeds Bright Data's realtime page limit, and the
+  # CLI answers "Realtime page limit exceeded -- switching to batch mode",
+  # wasting a round trip before doing the same thing. Observed, not guessed.
+  mode: async

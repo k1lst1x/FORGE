@@ -11,7 +11,7 @@ MODE ?= 1
 ROUTES ?= / /products
 URL ?= http://localhost:8100
 
-.PHONY: help up audit brief inject restore inject-status inject-smoke triage-smoke test trace clean security-preview
+.PHONY: help up audit brief inject restore inject-status inject-smoke triage-smoke test trace clean security-preview scrape
 
 help:
 	@echo "  make audit                 run the 17 checks once against $(URL)"
@@ -61,3 +61,6 @@ clean:
 
 security-preview:
 	$(PY) scripts/security_preview.py --url $(URL)
+
+scrape:
+	$(PY) scripts/scrape_now.py

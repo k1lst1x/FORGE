@@ -28,7 +28,13 @@ app.include_router(security.router)
 
 
 def _products() -> list[dict]:
-    return brightdata.scraper_run()
+    """Read what the last successful scrape wrote.
+
+    Rendering must never trigger a scrape: a page load would shell out to the
+    Bright Data CLI, and a browser refresh would queue another. `make scrape`
+    writes data/books.json; this only reads it.
+    """
+    return brightdata.read_data().get("rows") or []
 
 
 @app.get("/", response_class=HTMLResponse)

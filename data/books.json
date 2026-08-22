@@ -1,0 +1,30 @@
+{
+  "rows": [
+    {
+      "name": "A Light in the Attic",
+      "price": 51.77,
+      "currency": "GBP",
+      "availability": "in_stock",
+      "rating": "three"
+    },
+    {
+      "name": "Tipping the Velvet",
+      "price": 53.74,
+      "currency": "GBP",
+      "availability": "in_stock",
+      "rating": "one"
+    },
+    {
+      "name": "Soumission",
+      "price": 50.1,
+      "currency": "GBP",
+      "availability": "out_of_stock",
+      "rating": "one"
+    }
+  ],
+  "row_count": 3,
+  "last_success_at": 1787438239.937632,
+  "source": "https://books.toscrape.com/",
+  "collector_id": "c_mt4y9wy817vo82ojy8",
+  "duration_ms": 0.0
+}
