@@ -9,6 +9,7 @@ import {
   XCircle,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { PromptInput } from "./components/ui/ai-chat-input";
 
 type FactoryRun = {
   id: string;
@@ -52,6 +53,12 @@ type Finding = {
 type FactoryRunDetail = FactoryRun & {
   steps: FactoryStep[];
   findings: Finding[];
+};
+
+type ChatMessage = {
+  id: string;
+  role: "user" | "assistant";
+  content: string;
 };
 
 const stages = [
@@ -114,6 +121,14 @@ function App() {
   const [detail, setDetail] = useState<FactoryRunDetail | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [messages, setMessages] = useState<ChatMessage[]>([
+    {
+      id: "welcome",
+      role: "assistant",
+      content:
+        "FORGE is ready. Ask for a brief, a fix, or a risk audit and I’ll turn it into a tracked run.",
+    },
+  ]);
 
   const refreshRuns = useCallback(async () => {
     const nextRuns = await apiFetch<FactoryRun[]>("/factory/runs");
@@ -203,6 +218,33 @@ function App() {
       setError(err instanceof Error ? err.message : `Unable to ${action} the run.`);
     }
   };
+
+  const handlePromptSubmit = useCallback((message: string, meta: { model: string; effort: string; attachments: File[] }) => {
+    const nextUserMessage: ChatMessage = {
+      id: `user-${Date.now()}`,
+      role: "user",
+      content: message,
+    };
+
+    setMessages((current) => [...current, nextUserMessage]);
+
+    const response = `Queued through ${meta.model} at ${meta.effort} effort. ${
+      meta.attachments.length > 0
+        ? `I also received ${meta.attachments.length} attachment(s) for review.`
+        : "No files were attached; I’ll treat this as a text-only brief."
+    }`;
+
+    setTimeout(() => {
+      setMessages((current) => [
+        ...current,
+        {
+          id: `assistant-${Date.now()}`,
+          role: "assistant",
+          content: response,
+        },
+      ]);
+    }, 250);
+  }, []);
 
   return (
     <main className="shell">
@@ -383,6 +425,28 @@ function App() {
               <div className="empty-state">Select a run to inspect details.</div>
             )}
           </section>
+        </div>
+      </section>
+
+      <section className="chat-panel" aria-label="AI chat panel">
+        <div className="panel-header chat-header">
+          <div>
+            <p className="section-eyebrow">AI chat</p>
+            <h2>Prompt the assistant</h2>
+          </div>
+        </div>
+
+        <div className="chat-window">
+          {messages.map((message) => (
+            <div key={message.id} className={`chat-bubble ${message.role}`}>
+              <span className="chat-role">{message.role === "assistant" ? "Assistant" : "You"}</span>
+              <p>{message.content}</p>
+            </div>
+          ))}
+        </div>
+
+        <div className="chat-input-wrap">
+          <PromptInput onSubmit={handlePromptSubmit} placeholder="Ask the factory to inspect, patch or summarize..." />
         </div>
       </section>
     </main>
