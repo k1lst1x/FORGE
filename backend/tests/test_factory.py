@@ -1,5 +1,8 @@
 from fastapi.testclient import TestClient
 
+from app.core.config import settings
+from app.factory import portal
+from app.factory.models import ChangeRequest, IntakeType
 from app.main import app
 
 
@@ -106,3 +109,55 @@ def test_scheduler_start_stop_cycle() -> None:
     stopped = client.post("/factory/audit/stop")
     assert stopped.status_code == 200
     assert stopped.json()["running"] is False
+
+
+def test_port_upsert_run_uses_real_entity_payload(monkeypatch) -> None:
+    monkeypatch.setattr(settings, "port_client_id", "fake-client")
+    monkeypatch.setattr(settings, "port_client_secret", "fake-secret")
+    calls: list[tuple[str, str, dict]] = []
+
+    class FakeResponse:
+        def __init__(self, payload: dict, status_code: int = 200) -> None:
+            self.payload = payload
+            self.status_code = status_code
+
+        def raise_for_status(self) -> None:
+            if self.status_code >= 400:
+                raise RuntimeError(f"HTTP {self.status_code}")
+
+        def json(self) -> dict:
+            return self.payload
+
+    def fake_get(url: str, **_: object) -> FakeResponse:
+        calls.append(("GET", url, {}))
+        return FakeResponse({"ok": True}, status_code=404)
+
+    def fake_post(url: str, **kwargs: object) -> FakeResponse:
+        calls.append(("POST", url, kwargs.get("json", {})))
+        if url.endswith("/auth/access_token"):
+            return FakeResponse({"accessToken": "fake-token"})
+        if url.endswith("/blueprints"):
+            return FakeResponse({"ok": True, "blueprint": {"identifier": "forge_run"}})
+        return FakeResponse({"ok": True, "entity": {"identifier": "run_123"}})
+
+    monkeypatch.setattr("app.factory.portal.httpx.get", fake_get)
+    monkeypatch.setattr("app.factory.portal.httpx.post", fake_post)
+
+    cr = ChangeRequest(
+        run_id="run_123",
+        intake=IntakeType.brief,
+        title="Run payload test",
+        brief_text="Verify Port sync payload",
+        trace_id="trace-123",
+        branch="forge/run_123",
+        pr_url="https://example.com/pr/1",
+        outcome="awaiting_human",
+    )
+
+    result = portal.upsert_run(cr)
+
+    assert result == "run_123"
+    assert any(call[1].endswith("/blueprints/forge_run/entities") for call in calls)
+    entity_payload = next(payload for method, url, payload in calls if url.endswith("/blueprints/forge_run/entities"))
+    assert entity_payload["properties"]["status"] == "awaiting_human"
+    assert entity_payload["properties"]["trace_id"] == "trace-123"
