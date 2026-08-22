@@ -28,13 +28,13 @@ jobs:
 
       - name: Start FastAPI App in background
         env:
-          PYTHONPATH: .
+          PYTHONPATH: backend
         run: |
           python -m uvicorn backend.app.main:app --host 127.0.0.1 --port 8100 &
-          sleep 3
+          timeout 10s bash -c 'until curl -s http://127.0.0.1:8100/docs > /dev/null; do sleep 1; done'
 
       - name: Run Pytest & Playwright Tests
         env:
-          PYTHONPATH: .
+          PYTHONPATH: backend:.
         run: |
           pytest
