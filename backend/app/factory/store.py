@@ -15,6 +15,7 @@ from app.factory.models import (
     Finding,
     FindingSeverity,
     IntakeType,
+    TriageClassification,
 )
 
 
@@ -56,7 +57,27 @@ def init_db() -> None:
                 pr_url TEXT,
                 trace_id TEXT,
                 outcome TEXT,
+                classification TEXT,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE TABLE IF NOT EXISTS grade_snapshots (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                route TEXT NOT NULL,
+                grade TEXT NOT NULL,
+                score INTEGER NOT NULL,
+                high_count INTEGER NOT NULL,
+                med_count INTEGER NOT NULL,
+                source TEXT NOT NULL DEFAULT 'audit',
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE TABLE IF NOT EXISTS outage_state (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                active INTEGER NOT NULL DEFAULT 0,
+                run_id TEXT,
+                justification TEXT,
                 updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
 
@@ -87,6 +108,21 @@ def init_db() -> None:
             );
             """
         )
+        _ensure_column(db, "factory_runs", "classification", "TEXT")
+        db.execute(
+            """
+            INSERT OR IGNORE INTO outage_state (id, active) VALUES (1, 0)
+            """
+        )
+
+
+def _ensure_column(
+    db: sqlite3.Connection, table: str, column: str, definition: str
+) -> None:
+    rows = db.execute(f"PRAGMA table_info({table})").fetchall()
+    names = {row[1] for row in rows}
+    if column not in names:
+        db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
 
 
 def create_run(
@@ -134,7 +170,7 @@ def get_run_detail(run_id: str) -> FactoryRunDetail:
 
 
 def update_run(run_id: str, **fields: Any) -> FactoryRun:
-    allowed = {"status", "next_gate", "branch", "pr_url", "trace_id", "outcome"}
+    allowed = {"status", "next_gate", "branch", "pr_url", "trace_id", "outcome", "classification"}
     updates = {key: value for key, value in fields.items() if key in allowed}
     if not updates:
         return get_run(run_id)
@@ -268,6 +304,90 @@ def list_findings(run_id: str | None = None, route: str | None = None) -> list[F
     return [_finding_from_row(row) for row in rows]
 
 
+def save_grade_snapshot(
+    *,
+    route: str,
+    grade: str,
+    score: int,
+    high_count: int,
+    med_count: int,
+    source: str,
+) -> None:
+    with connection() as db:
+        db.execute(
+            """
+            INSERT INTO grade_snapshots (
+                route, grade, score, high_count, med_count, source
+            )
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (route, grade, score, high_count, med_count, source),
+        )
+
+
+def list_grade_history(limit: int = 80) -> list[dict[str, Any]]:
+    with connection() as db:
+        rows = db.execute(
+            """
+            SELECT route, grade, score, high_count, med_count, source, created_at
+            FROM grade_snapshots
+            ORDER BY datetime(created_at) DESC, id DESC
+            LIMIT ?
+            """,
+            (limit,),
+        ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def delete_grade_history(source: str) -> int:
+    with connection() as db:
+        cursor = db.execute("DELETE FROM grade_snapshots WHERE source = ?", (source,))
+        return cursor.rowcount
+
+
+def record_outage(*, active: bool, run_id: str | None, justification: str | None) -> None:
+    with connection() as db:
+        db.execute(
+            """
+            INSERT INTO outage_state (id, active, run_id, justification, updated_at)
+            VALUES (1, ?, ?, ?, CURRENT_TIMESTAMP)
+            ON CONFLICT(id) DO UPDATE SET
+                active = excluded.active,
+                run_id = excluded.run_id,
+                justification = excluded.justification,
+                updated_at = CURRENT_TIMESTAMP
+            """,
+            (1 if active else 0, run_id, justification),
+        )
+
+
+def outage_state() -> dict[str, Any]:
+    with connection() as db:
+        row = db.execute("SELECT * FROM outage_state WHERE id = 1").fetchone()
+    if row is None:
+        return {"active": False, "run_id": None, "justification": None}
+    return {
+        "active": bool(row["active"]),
+        "run_id": row["run_id"],
+        "justification": row["justification"],
+        "updated_at": row["updated_at"],
+    }
+
+
+def delete_runs_by_trigger(trigger: str) -> int:
+    with connection() as db:
+        run_rows = db.execute(
+            "SELECT id FROM factory_runs WHERE trigger = ?",
+            (trigger,),
+        ).fetchall()
+        run_ids = [row["id"] for row in run_rows]
+        for run_id in run_ids:
+            db.execute("DELETE FROM findings WHERE run_id = ?", (run_id,))
+            db.execute("DELETE FROM factory_steps WHERE run_id = ?", (run_id,))
+        db.execute("DELETE FROM factory_runs WHERE trigger = ?", (trigger,))
+        return len(run_ids)
+
+
 def _run_from_row(row: sqlite3.Row) -> FactoryRun:
     return FactoryRun(
         id=row["id"],
@@ -281,9 +401,20 @@ def _run_from_row(row: sqlite3.Row) -> FactoryRun:
         pr_url=row["pr_url"],
         trace_id=row["trace_id"],
         outcome=row["outcome"],
+        classification=_classification_from_row(row),
         created_at=row["created_at"],
         updated_at=row["updated_at"],
     )
+
+
+def _classification_from_row(row: sqlite3.Row) -> TriageClassification | None:
+    keys = row.keys()
+    if "classification" not in keys:
+        return None
+    value = row["classification"]
+    if not value:
+        return None
+    return TriageClassification(value)
 
 
 def _step_from_row(row: sqlite3.Row) -> FactoryStep:

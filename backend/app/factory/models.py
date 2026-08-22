@@ -80,6 +80,7 @@ class FactoryRun(BaseModel):
     pr_url: str | None = None
     trace_id: str | None = None
     outcome: str | None = None
+    classification: TriageClassification | None = None
     created_at: str
     updated_at: str
 

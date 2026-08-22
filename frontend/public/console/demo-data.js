@@ -43,22 +43,22 @@
       suggested_fix_hint: 'Add alt attributes; empty alt="" for decorative images',
     },
     {
-      finding_id: 'f_5e44', check_id: 'P1', severity: 'MED', route: '/pricing', status: 'suppressed',
+      finding_id: 'f_5e44', check_id: 'P1', severity: 'MED', route: '/products', status: 'suppressed',
       title: 'Response under threshold', category: 'performance', occurrences: 9,
       first_seen: iso(-3600 * 48), run_id: 'run_41d0e7b9',
-      evidence: '742ms server response, threshold 500ms, observed on 200 response for /pricing',
-      suggested_fix_hint: 'Cache the plan table; it is recomputed per request',
-      justification: 'Real, but the only fix that reaches 500ms is caching the plan table, and the freshness contract for prices is a decision a human owns. Opened as an issue with the analysis; no code written.',
+      evidence: '742ms server response, threshold 500ms, observed on 200 response for /products',
+      suggested_fix_hint: 'Cache the scraped catalog; it is recomputed per request',
+      justification: 'Real, but the only fix that reaches 500ms is caching the Bright Data scrape, and catalog freshness is a decision a human owns. Opened as an issue with the analysis; no code written.',
     },
     {
-      finding_id: 'f_9c31', check_id: 'Q3', severity: 'MED', route: '/pricing', status: 'open',
+      finding_id: 'f_9c31', check_id: 'Q3', severity: 'MED', route: '/products', status: 'open',
       title: 'Page has a title and meta description', category: 'quality', occurrences: 2,
       first_seen: iso(-3600 * 9), run_id: null,
       evidence: 'Page is missing meta description',
-      suggested_fix_hint: 'Add a meta description to the template head',
+      suggested_fix_hint: 'Add a meta description to the Pulse catalog template',
     },
     {
-      finding_id: 'f_2b8e', check_id: 'S10', severity: 'LOW', route: '/status', status: 'suppressed',
+      finding_id: 'f_2b8e', check_id: 'S10', severity: 'LOW', route: '/products', status: 'suppressed',
       title: 'No credential-shaped strings in the body', category: 'security', occurrences: 1,
       first_seen: iso(-3600 * 31), run_id: 'run_c07a55e1',
       evidence: 'base64-shaped string of length 71 near "<script integrity=" — value redacted (sha3...c19f)',
@@ -66,10 +66,10 @@
       justification: 'The matched string is a Subresource Integrity hash on a script tag, not a credential. SRI hashes are base64 digests and are meant to be public. Suppressed, with this reason recorded in the catalog.',
     },
     {
-      finding_id: 'f_6fa0', check_id: 'Q2', severity: 'LOW', route: '/status', status: 'open',
+      finding_id: 'f_6fa0', check_id: 'Q2', severity: 'LOW', route: '/', status: 'open',
       title: 'External links carry rel=noopener', category: 'quality', occurrences: 1,
       first_seen: iso(-3600 * 2), run_id: null,
-      evidence: '2 external link(s) without rel=noopener: status.signoz.io, github.com',
+      evidence: '2 external link(s) without rel=noopener: brightdata.com, github.com/k1lst1x/FORGE',
       suggested_fix_hint: 'Add rel="noopener noreferrer" to target=_blank links',
     },
   ];
@@ -77,37 +77,29 @@
   // ----------------------------------------------------------------- catalog
   var CATALOG = [
     {
-      route: '/', title: 'Pulse — overview', grade: 'bronze', high: 2, med: 0, low: 1,
-      last_audit: iso(-47), created_by_run: 'run_0a11c3d2', page_id: 'pulse_root',
+      route: '/', title: 'Pulse — home', grade: 'bronze', high: 2, med: 0, low: 1,
+      last_audit: iso(-47), created_by_run: 'run_0a11c3d2', page_id: 'pulse_home',
     },
     {
-      route: '/pricing', title: 'Plans and pricing', grade: 'silver', high: 0, med: 1, low: 0,
-      last_audit: iso(-47), created_by_run: 'run_41d0e7b9', page_id: 'pulse_pricing',
-    },
-    {
-      route: '/status', title: 'Service status', grade: 'gold', high: 0, med: 0, low: 1,
-      last_audit: iso(-47), created_by_run: 'run_c07a55e1', page_id: 'pulse_status',
-    },
-    {
-      route: '/changelog', title: 'Changelog', grade: 'gold', high: 0, med: 0, low: 0,
-      last_audit: iso(-47), created_by_run: 'run_88be14aa', page_id: 'pulse_changelog',
+      route: '/products', title: 'Pulse — scraped catalog', grade: 'silver', high: 0, med: 1, low: 0,
+      last_audit: iso(-47), created_by_run: 'run_41d0e7b9', page_id: 'pulse_products',
     },
   ];
 
   // -------------------------------------------------------------- run history
   var HISTORY = [
     hrun('run_9f2c1ab4', -1140, 'finding', 'scheduler', 'S1 on /', 'AUTOFIX_SAFE', 'merged', 84200, 1),
-    hrun('run_41d0e7b9', -3300, 'finding', 'scheduler', 'P1 on /pricing', 'NEEDS_HUMAN_DESIGN', 'escalated', 11400, 0),
-    hrun('run_c07a55e1', -5220, 'finding', 'signoz alert', 'S10 on /status', 'FALSE_POSITIVE', 'suppressed', 9100, 0),
-    hrun('run_0a11c3d2', -7800, 'brief', 'port brief', 'Add a service status page', 'NEW_FEATURE', 'merged', 196300, 1),
-    hrun('run_5512bd8f', -9600, 'finding', 'scheduler', 'S4 on /pricing', 'AUTOFIX_SAFE', 'merged', 71900, 0),
+    hrun('run_41d0e7b9', -3300, 'finding', 'scheduler', 'P1 on /products', 'NEEDS_HUMAN_DESIGN', 'escalated', 11400, 0),
+    hrun('run_c07a55e1', -5220, 'finding', 'signoz alert', 'S10 on /products', 'FALSE_POSITIVE', 'suppressed', 9100, 0),
+    hrun('run_0a11c3d2', -7800, 'brief', 'port brief', 'Show the five cheapest products', 'NEW_FEATURE', 'merged', 196300, 1),
+    hrun('run_5512bd8f', -9600, 'finding', 'scheduler', 'S4 on /products', 'AUTOFIX_SAFE', 'merged', 71900, 0),
     hrun('run_bb31c0a7', -11400, 'finding', 'scheduler', 'S2 on /', 'DUPLICATE', 'attached_to_existing_run', 4300, 0),
-    hrun('run_88be14aa', -14700, 'brief', 'port brief', 'Publish a changelog page', 'NEW_FEATURE', 'merged', 174000, 0),
+    hrun('run_88be14aa', -14700, 'brief', 'port brief', 'Expose JSON products API', 'NEW_FEATURE', 'merged', 174000, 0),
     hrun('run_e7710b23', -18000, 'finding', 'scheduler', 'S11 on /', 'AUTOFIX_SAFE', 'merged', 66700, 1),
-    hrun('run_1c9de440', -21600, 'finding', 'scheduler', 'S1 on /pricing', 'AUTOFIX_SAFE', 'rejected_by_human', 90400, 0),
-    hrun('run_a4f0e918', -25200, 'finding', 'scheduler', 'Q4 on /changelog', 'AUTOFIX_SAFE', 'merged', 58200, 0),
+    hrun('run_1c9de440', -21600, 'finding', 'scheduler', 'S1 on /products', 'AUTOFIX_SAFE', 'rejected_by_human', 90400, 0),
+    hrun('run_a4f0e918', -25200, 'finding', 'scheduler', 'Q4 on /products', 'AUTOFIX_SAFE', 'merged', 58200, 0),
     hrun('run_37c1ba05', -28800, 'finding', 'watchdog', 'S1 on /', 'UPSTREAM_OUTAGE', 'escalated', 6800, 0),
-    hrun('run_d90b6c17', -32400, 'brief', 'port brief', 'Add a plan comparison table', 'NEW_FEATURE', 'merged', 210500, 2),
+    hrun('run_d90b6c17', -32400, 'brief', 'port brief', 'Group out-of-stock items by price', 'NEW_FEATURE', 'merged', 210500, 2),
   ];
 
   // ------------------------------------------------------------- the live run
@@ -131,7 +123,7 @@
       tests_passed: 12, tests_total: 12, closed: 3, introduced: 0,
       evidence: 'pytest green (12/12); re-audit of / shows S1 closed and no new findings.',
     },
-    pr_url: 'https://github.com/forge/pulse/pull/318',
+    pr_url: 'https://github.com/k1lst1x/FORGE/pull/318',
     script: [
       ['INTAKE', 4], ['CONTEXT', 6], ['TRIAGE', 7], ['PLAN', 6], ['ACT', 9],
       ['VERIFY', 7], ['PLAN', 5], ['ACT', 8], ['VERIFY', 7], ['GATE', 16], ['RELEASE', 6],
@@ -142,16 +134,16 @@
 
   var RUN_B = {
     run_id: 'run_2ea90d55', intake: 'finding', trigger: 'scheduler',
-    title: 'P1 on /pricing — response over threshold',
-    check_id: 'P1', severity: 'MED', route: '/pricing', finding_id: 'f_5e44',
-    evidence: '742ms server response, threshold 500ms, observed on 200 response for /pricing',
+    title: 'P1 on /products — response over threshold',
+    check_id: 'P1', severity: 'MED', route: '/products', finding_id: 'f_5e44',
+    evidence: '742ms server response, threshold 500ms, observed on 200 response for /products',
     trace_id: '7d3a1e88b0c24f5aa1de44e02b7c9931',
     classification: 'NEEDS_HUMAN_DESIGN', should_act: false, confidence: 0.79,
     decided_by: 'model', blast_radius: 'clients',
     model: 'claude-sonnet-4-6', tokens_in: 3980, tokens_out: 244,
-    justification: 'P1 on /pricing is real, but the only fix that reaches 500ms is caching the plan table, and the freshness contract for prices is a decision a human owns rather than an implementation detail. Opening an issue with the analysis and writing no code.',
+    justification: 'P1 on /products is real, but the only fix that reaches 500ms is caching the Bright Data scrape, and catalog freshness is a decision a human owns rather than an implementation detail. Opening an issue with the analysis and writing no code.',
     changeset: [], verify: null, pr_url: null,
-    issue_url: 'https://github.com/forge/pulse/issues/122',
+    issue_url: 'https://github.com/k1lst1x/FORGE/issues/122',
     script: [['INTAKE', 4], ['CONTEXT', 6], ['TRIAGE', 8], ['ESCALATED', 14]],
     retry_at: -1,
   };
@@ -289,7 +281,7 @@
       audit_interval_seconds: CYCLE,
       runs_today: 27,
       severity: { HIGH: count('HIGH'), MED: count('MED'), LOW: count('LOW') },
-      grades: { '/': 'bronze', '/pricing': 'silver', '/status': 'gold', '/changelog': 'gold' },
+      grades: { '/': 'bronze', '/products': 'silver' },
       runs_per_hour: [1, 0, 2, 3, 1, 4, 2, 5, 3, 2, 6, 4],
     };
   }

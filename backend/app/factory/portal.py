@@ -118,7 +118,9 @@ def upsert_run(cr: ChangeRequest) -> str:
 
 
 def update_scorecard(route: str, grade: str, findings: list[dict]) -> None:
-    _ = (route, grade, findings)
+    from app.factory.port_catalog import update_page_scorecard
+
+    update_page_scorecard(route, grade, findings)
 
 
 def request_approval(cr: ChangeRequest) -> str:

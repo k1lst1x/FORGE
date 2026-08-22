@@ -64,7 +64,7 @@ should not have to reshape anything to make a screen light up.
 ```json
 { "scheduler": "healthy", "next_audit_seconds": 47, "runs_today": 27,
   "severity": {"HIGH": 2, "MED": 1, "LOW": 2},
-  "grades": {"/": "bronze", "/pricing": "silver"},
+  "grades": {"/": "bronze", "/products": "silver"},
   "runs_per_hour": [1,0,2,3,1,4,2,5,3,2,6,4] }
 ```
 

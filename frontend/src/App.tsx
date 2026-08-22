@@ -11,6 +11,8 @@ import {
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { PromptInput } from "./components/ui/ai-chat-input";
 
+import Dashboard from "./Dashboard";
+
 type FactoryRun = {
   id: string;
   title: string;
@@ -427,6 +429,8 @@ function App() {
           </section>
         </div>
       </section>
+
+      <Dashboard />
 
       <section className="chat-panel" aria-label="AI chat panel">
         <div className="panel-header chat-header">
