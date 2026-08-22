@@ -11,6 +11,7 @@ _loop_thread: threading.Thread | None = None
 _last_run_id: str | None = None
 _last_started_at: str | None = None
 _last_error: str | None = None
+_failures = 0
 
 
 def status() -> dict[str, object]:
@@ -20,6 +21,7 @@ def status() -> dict[str, object]:
         "last_run_id": _last_run_id,
         "last_started_at": _last_started_at,
         "last_error": _last_error,
+        "failures": _failures,
     }
 
 
@@ -75,7 +77,7 @@ async def _audit_loop() -> None:
 
 
 async def run_once() -> str:
-    global _last_error, _last_run_id, _last_started_at
+    global _last_error, _last_run_id, _last_started_at, _failures
     _last_started_at = datetime.now(UTC).isoformat()
     try:
         cr = engine.run_from_brief(
@@ -86,5 +88,6 @@ async def run_once() -> str:
         _last_error = None
         return cr.run_id
     except Exception as exc:
+        _failures += 1
         _last_error = str(exc)
         raise
