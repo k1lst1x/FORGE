@@ -1,6 +1,7 @@
-from fastapi import APIRouter, BackgroundTasks, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from pydantic import BaseModel, Field
 
+from app.auth import require_auth
 from app.factory import engine, observability, scheduler, store
 from app.factory.models import (
     FactoryRun,
@@ -12,7 +13,11 @@ from app.factory.models import (
 from app.factory.project_record import PROJECT_RECORD
 from app.factory.scorecards import PORT_SCORECARD
 
-router = APIRouter(prefix="/factory", tags=["factory"])
+router = APIRouter(
+    prefix="/factory",
+    tags=["factory"],
+    dependencies=[Depends(require_auth)],
+)
 
 
 class InjectRequest(BaseModel):

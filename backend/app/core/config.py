@@ -10,6 +10,12 @@ class Settings(BaseSettings):
     cors_origins: list[str] = Field(default_factory=lambda: ["http://localhost:5173"])
     database_path: str = "data/forge.db"
     audit_interval_seconds: int = 60
+    auth_username: str = "admin"
+    auth_password: str = "forge-local"
+    auth_password_hash: str = ""
+    auth_password_salt: str = "forge-local-salt"
+    auth_secret: str = "change-this-for-production"
+    auth_token_ttl_seconds: int = 28800
 
     brightdata_api_key: str = ""
     brightdata_browser_ws_url: str = ""

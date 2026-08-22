@@ -5,6 +5,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.factory import router as factory_router
+from app.api.auth import router as auth_router
 from app.core.config import settings
 from app.factory.integrations import smoke_checks
 from app.factory.store import init_db
@@ -46,3 +47,4 @@ def integrations_health() -> dict[str, object]:
 
 
 app.include_router(factory_router)
+app.include_router(auth_router)

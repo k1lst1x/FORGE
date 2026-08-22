@@ -71,12 +71,16 @@ const stages = [
 ];
 
 const API_BASE_URL = import.meta.env.VITE_API_URL ?? "http://localhost:8000";
+const AUTH_TOKEN_KEY = "forge_access_token";
+const LOGIN_PATH = "/auth/login";
 
 async function apiFetch<T>(path: string, options: RequestInit = {}): Promise<T> {
+  const token = sessionStorage.getItem(AUTH_TOKEN_KEY);
   const response = await fetch(`${API_BASE_URL}${path}`, {
     ...options,
     headers: {
       "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
       ...(options.headers ?? {}),
     },
   });
@@ -115,6 +119,13 @@ function statusClass(status: string): string {
 }
 
 function App() {
+  const [authenticated, setAuthenticated] = useState(
+    () => Boolean(sessionStorage.getItem(AUTH_TOKEN_KEY)),
+  );
+  const [username, setUsername] = useState("admin");
+  const [password, setPassword] = useState("");
+  const [loggingIn, setLoggingIn] = useState(false);
+  const [authError, setAuthError] = useState<string | null>(null);
   const [brief, setBrief] = useState(
     "Audit the app for security issues, patch the highest-risk route, and stop for human approval before release.",
   );
@@ -131,6 +142,40 @@ function App() {
         "FORGE is ready. Ask for a brief, a fix, or a risk audit and I’ll turn it into a tracked run.",
     },
   ]);
+
+  const handleLogin = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setLoggingIn(true);
+    setAuthError(null);
+    try {
+      const result = await apiFetch<{ access_token: string }>("/auth/login", {
+        method: "POST",
+        body: JSON.stringify({ username, password }),
+      });
+      sessionStorage.setItem(AUTH_TOKEN_KEY, result.access_token);
+      setAuthenticated(true);
+      setPassword("");
+      window.history.replaceState({}, "", "/");
+    } catch (err) {
+      setAuthError(err instanceof Error ? err.message : "Unable to sign in.");
+    } finally {
+      setLoggingIn(false);
+    }
+  };
+
+  const handleLogout = () => {
+    sessionStorage.removeItem(AUTH_TOKEN_KEY);
+    setAuthenticated(false);
+    setRuns([]);
+    setDetail(null);
+    window.history.replaceState({}, "", LOGIN_PATH);
+  };
+
+  useEffect(() => {
+    if (authenticated && window.location.pathname === LOGIN_PATH) {
+      window.history.replaceState({}, "", "/");
+    }
+  }, [authenticated]);
 
   const refreshRuns = useCallback(async () => {
     const nextRuns = await apiFetch<FactoryRun[]>("/factory/runs");
@@ -156,23 +201,29 @@ function App() {
   }, []);
 
   useEffect(() => {
+    if (!authenticated) {
+      return;
+    }
     void refreshRuns().catch((err: Error) => setError(err.message));
-  }, [refreshRuns]);
+  }, [authenticated, refreshRuns]);
 
   useEffect(() => {
-    if (!selectedRunId) {
+    if (!authenticated || !selectedRunId) {
       return;
     }
     void refreshDetail(selectedRunId).catch((err: Error) => setError(err.message));
-  }, [refreshDetail, selectedRunId]);
+  }, [authenticated, refreshDetail, selectedRunId]);
 
   useEffect(() => {
+    if (!authenticated) {
+      return;
+    }
     const timer = window.setInterval(() => {
       void refreshRuns().catch((err: Error) => setError(err.message));
     }, 5000);
 
     return () => window.clearInterval(timer);
-  }, [refreshRuns]);
+  }, [authenticated, refreshRuns]);
 
   const selectedRun = useMemo(
     () => runs.find((run) => run.id === selectedRunId) ?? null,
@@ -248,6 +299,32 @@ function App() {
     }, 250);
   }, []);
 
+  if (!authenticated) {
+    return (
+      <main className="auth-shell">
+        <section className="auth-card" aria-labelledby="login-title">
+          <p className="kicker">FORGE operator console</p>
+          <h1 id="login-title">Sign in</h1>
+          <p className="auth-copy">Use your operator credentials to access factory runs.</p>
+          <form className="auth-form" onSubmit={(event) => void handleLogin(event)}>
+            <label>
+              Username
+              <input value={username} onChange={(event) => setUsername(event.target.value)} autoComplete="username" required />
+            </label>
+            <label>
+              Password
+              <input type="password" value={password} onChange={(event) => setPassword(event.target.value)} autoComplete="current-password" required />
+            </label>
+            {authError ? <p className="error-banner">{authError}</p> : null}
+            <button type="submit" disabled={loggingIn}>
+              {loggingIn ? "Signing in…" : "Sign in"}
+            </button>
+          </form>
+        </section>
+      </main>
+    );
+  }
+
   return (
     <main className="shell">
       <section className="intro" aria-labelledby="title">
@@ -279,10 +356,13 @@ function App() {
             <p className="section-eyebrow">Operator console</p>
             <h2>Factory runs</h2>
           </div>
-          <button type="button" className="secondary-button" onClick={() => void refreshRuns()}>
-            <RefreshCw size={15} />
-            Refresh
-          </button>
+          <div className="header-actions">
+            <button type="button" className="secondary-button" onClick={() => void refreshRuns()}>
+              <RefreshCw size={15} />
+              Refresh
+            </button>
+            <button type="button" className="secondary-button" onClick={handleLogout}>Sign out</button>
+          </div>
         </div>
 
         <div className="composer">

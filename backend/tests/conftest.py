@@ -7,8 +7,10 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from app.core.config import settings
-from app.factory.store import init_db
+from app.auth import require_auth  # noqa: E402
+from app.core.config import settings  # noqa: E402
+from app.factory.store import init_db  # noqa: E402
+from app.main import app  # noqa: E402
 
 
 @pytest.fixture(autouse=True)
@@ -18,4 +20,7 @@ def isolated_database(tmp_path, monkeypatch):
     monkeypatch.setattr(settings, "port_client_secret", "")
     monkeypatch.setattr(settings, "signoz_ingestion_key", "")
     monkeypatch.setattr(settings, "signoz_ingest_base_url", "")
+    app.dependency_overrides[require_auth] = lambda: settings.auth_username
     init_db()
+    yield
+    app.dependency_overrides.clear()
