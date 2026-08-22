@@ -26,6 +26,7 @@ from forge.intake import router as intake_router
 from forge.status import router as status_router
 
 
+
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)-7s %(name)s: %(message)s")
 log = logging.getLogger("forge.api")
 
@@ -43,6 +44,7 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="forge-control", lifespan=lifespan)
+
 app.include_router(intake_router)
 app.include_router(status_router)
 
@@ -178,7 +180,7 @@ def decide(approval_id: str, decision: str, who: str = "human"):
     return {"approval_id": approval_id, "decision": decision}
 
 
-@app.get("/", response_class=HTMLResponse)
+@app.get("/approve", response_class=HTMLResponse)
 def console():
     """A minimal console so a human can approve without Port being wired."""
     pending = approvals.pending()
