@@ -205,3 +205,47 @@ def test_port_upsert_run_uses_real_entity_payload(monkeypatch) -> None:
     entity_payload = next(payload for method, url, payload in calls if url.endswith("/blueprints/forge_run/entities"))
     assert entity_payload["properties"]["status"] == "awaiting_human"
     assert entity_payload["properties"]["trace_id"] == "trace-123"
+
+
+def test_create_factory_run_rejects_empty_brief() -> None:
+    client = TestClient(app)
+
+    response = client.post("/factory/runs", json={"brief": ""})
+
+    assert response.status_code == 422
+
+
+def test_list_runs_returns_created_runs() -> None:
+    client = TestClient(app)
+
+    first = client.post("/factory/runs", json={"brief": "First run for list coverage."})
+    second = client.post("/factory/runs", json={"brief": "Second run for list coverage."})
+
+    assert first.status_code == 201
+    assert second.status_code == 201
+
+    response = client.get("/factory/runs")
+    assert response.status_code == 200
+    body = response.json()
+    assert len(body) >= 2
+    assert {item["brief"] for item in body if item["brief"] in {"First run for list coverage.", "Second run for list coverage."}} == {
+        "First run for list coverage.",
+        "Second run for list coverage.",
+    }
+
+
+def test_integration_health_reports_partial_when_unconfigured(monkeypatch) -> None:
+    import app.factory.integrations as integrations
+
+    monkeypatch.setattr(settings, "port_client_id", "")
+    monkeypatch.setattr(settings, "port_client_secret", "")
+    monkeypatch.setattr(settings, "openai_api_key", "")
+    monkeypatch.setattr(settings, "brightdata_browser_ws_url", "")
+    monkeypatch.setattr(settings, "brightdata_selenium_url", "")
+    monkeypatch.setattr(settings, "signoz_ingestion_key", "")
+
+    payload = integrations.smoke_checks()
+
+    assert payload["status"] == "partial"
+    assert any(item["service"] == "port" and not item["ok"] for item in payload["results"])
+    assert any(item["service"] == "openai" and not item["ok"] for item in payload["results"])
