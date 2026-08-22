@@ -25,7 +25,8 @@ help:
 
 # --- Damir: forge-control + pulse + cloudflared in one command ---
 up:
-	@echo "TODO(damir): start forge-control, pulse and cloudflared with labelled output"
+	@echo "starting pulse (8100) and forge-control (8000) -- Ctrl-C stops both"
+	$(PY) scripts/up.py
 
 audit:
 	$(PY) scripts/audit_now.py --url $(URL) --routes $(ROUTES) --quiet

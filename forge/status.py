@@ -41,36 +41,34 @@ def _suppressed_ids() -> set:
 
 @router.get("/api/findings")
 def findings() -> dict:
-    """What the last audit saw. This is what Pulse's /security page renders.
+    """What the factory currently knows, from the durable catalog.
 
-    Served from the most recent audit rather than by auditing on request: a page
-    load must not be able to trigger seventeen HTTP checks against the app that
-    is serving it.
+    NOT from the most recent audit object: a fix run's closing audit covers one
+    route, and reading that would make the dashboard flicker down to a single
+    page every time a run finished. The catalog is the union of every audit,
+    with findings marked open, closed or suppressed.
     """
-    from forge import audit
-    from forge.models import GRADE_VALUE
+    from forge import store
+    from forge.models import GRADE_VALUE, grade_for
 
-    result = audit.last_result()
-    if result is None:
+    last = store.last_audit()
+    rows = store.all_findings()
+    if last is None and not rows:
         # Never audited is NOT the same as clean, and the page must not show
         # green for it. A judge reading green means "checked and safe".
         return {"audited": False, "routes": [], "findings": [], "totals": {}, "worst_grade": None}
 
-    suppressed = _suppressed_ids()
-    rows = []
-    for finding in result.findings:
-        rows.append({
-            **finding,
-            "status": "suppressed" if finding.get("finding_id") in suppressed else "open",
-        })
-    open_rows = [r for r in rows if r["status"] == "open"]
+    open_rows = [r for r in rows if r.get("status") == "open"]
+    shown = [r for r in rows if r.get("status") in ("open", "suppressed")]
 
     routes = []
-    for route, grade in (result.grades or {}).items():
+    for route in sorted({r.get("route") for r in shown if r.get("route")}):
+        mine = [r for r in open_rows if r.get("route") == route]
         counts = {"HIGH": 0, "MED": 0, "LOW": 0}
-        for row in open_rows:
-            if row.get("route") == route:
-                counts[(row.get("severity") or "LOW").upper()] = counts.get((row.get("severity") or "LOW").upper(), 0) + 1
+        for row in mine:
+            key = (row.get("severity") or "LOW").upper()
+            counts[key] = counts.get(key, 0) + 1
+        grade = grade_for(mine)
         routes.append({"route": route, "grade": grade, "grade_value": GRADE_VALUE.get(grade, 0), "counts": counts})
 
     totals = {"HIGH": 0, "MED": 0, "LOW": 0}
@@ -78,15 +76,17 @@ def findings() -> dict:
         key = (row.get("severity") or "LOW").upper()
         totals[key] = totals.get(key, 0) + 1
 
+    order = {"HIGH": 0, "MED": 1, "LOW": 2}
     return {
         "audited": True,
-        "base_url": result.base_url,
-        "reachable": result.reachable,
-        "duration_ms": result.duration_ms,
-        "worst_grade": result.worst_grade,
+        "base_url": (last or {}).get("base_url", ""),
+        "reachable": (last or {}).get("reachable", True),
+        "duration_ms": (last or {}).get("duration_ms", 0),
+        "audited_at": (last or {}).get("at"),
+        "worst_grade": min([r["grade"] for r in routes], key=lambda g: GRADE_VALUE.get(g, 0)) if routes else "gold",
         "routes": sorted(routes, key=lambda r: r["grade_value"]),
-        "findings": sorted(rows, key=lambda r: ({"HIGH": 0, "MED": 1, "LOW": 2}.get((r.get("severity") or "").upper(), 3), r.get("route") or "")),
+        "findings": sorted(shown, key=lambda r: (order.get((r.get("severity") or "").upper(), 3), r.get("route") or "")),
         "totals": totals,
         "open_count": len(open_rows),
-        "suppressed_count": len(rows) - len(open_rows),
+        "suppressed_count": len([r for r in rows if r.get("status") == "suppressed"]),
     }

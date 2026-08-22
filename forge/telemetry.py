@@ -37,8 +37,82 @@ except Exception:  # pragma: no cover - the pre-install path
 
 SERVICE_NAME = os.getenv("OTEL_SERVICE_NAME", "forge-control")
 
+
+def _configure_signoz() -> bool:
+    """Point OTel at SigNoz Cloud when an ingestion key is configured.
+
+    Uses http/protobuf rather than grpc on purpose: grpcio is a compiled
+    dependency that fails to install on some machines, and the fallback costs
+    us nothing here.
+    """
+    from forge import config
+
+    if not (_OTEL and config.SIGNOZ_INGESTION_KEY):
+        return False
+    if os.getenv("FORGE_OTEL_CONFIGURED"):
+        return True
+    endpoint_base = os.getenv(
+        "OTEL_EXPORTER_OTLP_ENDPOINT", f"https://ingest.{config.SIGNOZ_REGION}.signoz.cloud:443"
+    ).rstrip("/")
+
+    # Probe before wiring the exporter. A rejected key otherwise produces an
+    # endless stream of "Failed to export span batch 401" from a background
+    # thread, which buries every real log line during a demo.
+    try:
+        import httpx as _httpx
+
+        probe = _httpx.post(
+            f"{endpoint_base}/v1/traces",
+            headers={"signoz-ingestion-key": config.SIGNOZ_INGESTION_KEY,
+                     "Content-Type": "application/x-protobuf"},
+            content=b"",
+            timeout=8,
+        )
+        if probe.status_code in (401, 403):
+            print(
+                f"[telemetry] SigNoz rejected the ingestion key at {endpoint_base} "
+                f"({probe.status_code}). Traces stay local. Check SIGNOZ_INGESTION_KEY and "
+                "SIGNOZ_REGION (us | eu | in).",
+                file=sys.stderr,
+            )
+            return False
+    except Exception as exc:
+        print(f"[telemetry] could not reach SigNoz ({exc}); traces stay local.", file=sys.stderr)
+        return False
+
+    try:
+        from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
+        from opentelemetry.sdk.resources import Resource
+        from opentelemetry.sdk.trace import TracerProvider
+        from opentelemetry.sdk.trace.export import BatchSpanProcessor
+
+        endpoint = endpoint_base
+        provider = TracerProvider(resource=Resource.create({"service.name": SERVICE_NAME}))
+        provider.add_span_processor(
+            BatchSpanProcessor(
+                OTLPSpanExporter(
+                    endpoint=f"{endpoint}/v1/traces",
+                    headers={"signoz-ingestion-key": config.SIGNOZ_INGESTION_KEY},
+                )
+            )
+        )
+        _trace.set_tracer_provider(provider)
+        os.environ["FORGE_OTEL_CONFIGURED"] = "1"
+        return True
+    except Exception as exc:  # telemetry must never take the factory down
+        print(f"[telemetry] SigNoz export unavailable: {exc}", file=sys.stderr)
+        return False
+
+
+_SIGNOZ = _configure_signoz()
+
 _depth: contextvars.ContextVar[int] = contextvars.ContextVar("forge_span_depth", default=0)
 _tracer = _trace.get_tracer("forge") if _OTEL else None
+
+
+def exporting() -> bool:
+    """True when spans are actually leaving this process."""
+    return bool(_SIGNOZ)
 _meter = _metrics.get_meter("forge") if _OTEL else None
 _instruments: dict[str, object] = {}
 

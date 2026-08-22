@@ -178,3 +178,8 @@ frontend/.vite/
 forge_state.json
 .forge_inject/
 security_preview.html
+
+# factory runtime state -- rewritten on every run, never a source artifact
+.forge_state/
+security_live.html
+security_preview.html

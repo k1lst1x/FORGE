@@ -535,7 +535,8 @@ def close_out(cr: ChangeRequest, span) -> ChangeRequest:
     result = _safe(audit_mod.run_audit, config.PULSE_BASE_URL, routes)
 
     if result is not None:
-        _safe(store.save_findings, cr.run_id, result.findings)
+        _safe(store.save_findings, cr.run_id, result.findings, result.routes_checked)
+        _safe(store.save_audit, result)
         for route, grade in (result.grades or {}).items():
             _safe(portal.update_scorecard, route, grade, result.for_route(route))
         cr.context["closing_audit"] = result.as_dict()

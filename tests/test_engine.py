@@ -92,6 +92,23 @@ def no_network(monkeypatch):
     monkeypatch.setattr("forge.engine.planner.plan_feature", _fake_plan)
     monkeypatch.setattr("forge.engine.verify_mod.verify", _fake_verify)
 
+    # portal and vcs are REAL now: upsert_run posts to Port on every step, and
+    # wait_for_approval genuinely blocks until a human decides. Neither belongs
+    # in a unit test -- one is slow, the other never returns.
+    monkeypatch.setattr("forge.portal.upsert_run", lambda cr: cr.run_id)
+    monkeypatch.setattr("forge.portal.update_scorecard", lambda route, grade, findings: None)
+    monkeypatch.setattr("forge.portal.request_approval", lambda cr: f"approval_{cr.run_id}")
+    monkeypatch.setattr("forge.portal.wait_for_approval", lambda approval_id: True)
+    monkeypatch.setattr("forge.portal.escalate", lambda cr, reason: f"escalation_{cr.run_id}")
+    monkeypatch.setattr("forge.vcs.create_branch", lambda name: f"forge/{name}")
+    monkeypatch.setattr("forge.vcs.write_files", lambda changeset: [c["path"] for c in changeset])
+    monkeypatch.setattr("forge.vcs.commit_and_push", lambda branch, message: "abc1234")
+    monkeypatch.setattr("forge.vcs.open_pr", lambda branch, title, body: "https://github.com/x/y/pull/1")
+    monkeypatch.setattr("forge.vcs.merge_pr", lambda pr_url: True)
+    monkeypatch.setattr("forge.store.save_findings", lambda *a, **k: None)
+    monkeypatch.setattr("forge.store.record_run", lambda cr: None)
+    monkeypatch.setattr("forge.store.save_audit", lambda result: None)
+
 
 FINDING = {
     "finding_id": "f_test",
