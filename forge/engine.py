@@ -192,10 +192,29 @@ def _page_source(finding: dict) -> str:
 
 
 def _affected_routes(cr: ChangeRequest) -> list[str]:
+    """Which routes the closing audit checks.
+
+    "/" is ALWAYS included, and that is not cosmetic. Findings are identified by
+    a hash of check_id + route, and the app-level checks (exposed paths, stack
+    traces, docs) attribute to the first route audited. Leave "/" out and the
+    same defect gets one id from the scheduled audit and a different one here,
+    which quietly breaks dedupe and the occurrence count.
+
+    A brief's created routes come from the changeset the factory just wrote --
+    NOT from context["existing_routes"], which holds file paths.
+    """
+    routes: list[str] = []
     if cr.route:
-        return [cr.route]
-    routes = cr.context.get("existing_routes") or []
-    return list(routes) if routes else ["/"]
+        routes.append(cr.route)
+    routes.extend(cr.context.get("created_routes") or [])
+    if "/" not in routes:
+        routes.append("/")
+    seen, ordered = set(), []
+    for route in routes:
+        if route not in seen:
+            seen.add(route)
+            ordered.append(route)
+    return ordered
 
 
 def _pr_body(cr: ChangeRequest) -> str:
@@ -211,6 +230,17 @@ def _pr_body(cr: ChangeRequest) -> str:
             "- check: " + str(cr.check_id) + " (" + str(cr.finding.get("severity")) + ")",
             "- route: " + str(cr.route),
             "- evidence: " + str(cr.finding.get("evidence")),
+            "",
+        ]
+    created = cr.context.get("created_routes") or []
+    if created:
+        lines += [
+            "## What happens to this page next",
+            "",
+            "The scheduled audit picks up "
+            + ", ".join("`" + r + "`" for r in created)
+            + " on its next pass, and grades it against the same seventeen checks as every other "
+            "page this factory has shipped. The factory does not stop caring once this merges.",
             "",
         ]
     lines += [
@@ -365,7 +395,13 @@ def plan(cr: ChangeRequest, span) -> ChangeRequest:
             **shared,
         )
 
+    created = verify_mod.new_routes(cr.changeset)
+    if created:
+        cr.context["created_routes"] = created
+        cr.context.setdefault("route", created[0])
+
     if span is not None:
+        span.set_attribute("plan.created_routes", ",".join(created))
         span.set_attribute("plan.files_changed", len(cr.changeset))
         span.set_attribute("plan.paths", ",".join(cr.files_changed))
         span.set_attribute("plan.attempt", cr.attempts + 1)
@@ -619,12 +655,16 @@ def run_from_finding(finding: dict) -> ChangeRequest:
     )
 
 
-def run_from_brief(text: str, title: str | None = None) -> ChangeRequest:
-    """Loop A. A brief submitted in Port lands here."""
+def run_from_brief(text: str, title: str | None = None, run_id: str | None = None) -> ChangeRequest:
+    """Loop A. A brief submitted in Port lands here.
+
+    run_id is accepted so the intake endpoint can hand the caller a handle
+    before the run finishes -- the same id that lands in Port and on the trace.
+    """
     first_line = (text or "").strip().split("\n")[0][:80]
     return run(
         ChangeRequest(
-            run_id=new_run_id(),
+            run_id=run_id or new_run_id(),
             intake=INTAKE_BRIEF,
             title=title or first_line or "Untitled brief",
             brief_text=text,

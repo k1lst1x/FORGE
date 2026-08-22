@@ -1,0 +1,158 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Security posture - Pulse</title>
+<meta name="description" content="Every open finding the factory's audit has recorded against this app, with a severity grade for each page.">
+<meta http-equiv="refresh" content="{{ refresh }}">
+<style>
+  :root {
+    --bg: #0b1020; --panel: #151b2e; --line: #2a3350; --text: #f8fafc; --muted: #9aa6c4;
+    --clean: #22c55e; --critical: #ef4444; --warning: #f59e0b; --pending: #64748b;
+    --state: var(--pending);
+  }
+  [data-state="clean"] { --state: var(--clean); }
+  [data-state="critical"], [data-state="outage"] { --state: var(--critical); }
+  [data-state="warning"] { --state: var(--warning); }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font-family: ui-sans-serif, system-ui, "Segoe UI", sans-serif;
+    font-size: 20px; line-height: 1.45; padding: 2.5rem 3rem;
+  }
+  nav { font-size: 1.05rem; color: var(--muted); margin-bottom: 2rem; }
+  nav a { color: var(--muted); text-decoration: none; padding-right: 1.25rem; }
+  nav a:hover { color: var(--text); }
+
+  .banner {
+    border-left: 14px solid var(--state); background: var(--panel);
+    padding: 1.75rem 2rem; border-radius: 10px; margin-bottom: 2rem;
+  }
+  .headline {
+    font-size: 4rem; font-weight: 800; letter-spacing: -0.02em;
+    color: var(--state); margin: 0; line-height: 1.05;
+  }
+  .subtitle { font-size: 1.35rem; color: var(--text); margin: .6rem 0 0; }
+  .meta { color: var(--muted); font-size: 1rem; margin-top: .75rem; }
+
+  .tallies { display: flex; gap: 1rem; margin: 0 0 2.25rem; flex-wrap: wrap; }
+  .tally {
+    background: var(--panel); border: 2px solid var(--line); border-radius: 10px;
+    padding: 1rem 1.75rem; min-width: 9rem;
+  }
+  .tally .n { font-size: 3.25rem; font-weight: 800; line-height: 1; display: block; }
+  .tally .k { font-size: .95rem; letter-spacing: .12em; color: var(--muted); text-transform: uppercase; }
+  .high .n { color: var(--critical); }
+  .med .n { color: var(--warning); }
+  .low .n { color: var(--muted); }
+
+  h2 { font-size: 1.15rem; letter-spacing: .14em; text-transform: uppercase;
+       color: var(--muted); margin: 2.25rem 0 1rem; font-weight: 700; }
+
+  .grades { display: flex; gap: 1rem; flex-wrap: wrap; }
+  .grade {
+    display: flex; align-items: center; gap: 1rem; background: var(--panel);
+    border: 2px solid var(--line); border-radius: 10px; padding: .9rem 1.4rem;
+  }
+  .badge {
+    font-weight: 800; font-size: 1.05rem; letter-spacing: .1em; padding: .35rem .85rem;
+    border-radius: 6px; color: #0b1020;
+  }
+  .gold { background: #fbbf24; } .silver { background: #cbd5e1; } .bronze { background: #fb923c; }
+  .grade .route { font-size: 1.3rem; font-weight: 600; }
+  .grade .counts { color: var(--muted); font-size: 1rem; }
+
+  table { width: 100%; border-collapse: collapse; margin-top: .5rem; }
+  th { text-align: left; font-size: .9rem; letter-spacing: .12em; text-transform: uppercase;
+       color: var(--muted); border-bottom: 2px solid var(--line); padding: .6rem .8rem; }
+  td { padding: 1rem .8rem; border-bottom: 1px solid var(--line); vertical-align: top; font-size: 1.05rem; }
+  tr.suppressed td { opacity: .45; }
+  .sev { font-weight: 800; font-size: 1rem; letter-spacing: .08em; padding: .3rem .7rem;
+         border-radius: 5px; color: #0b1020; white-space: nowrap; }
+  .sev.HIGH { background: var(--critical); color: #fff; }
+  .sev.MED { background: var(--warning); }
+  .sev.LOW { background: #64748b; color: #fff; }
+  .check { font-family: ui-monospace, Consolas, monospace; font-weight: 700; font-size: 1.05rem; }
+  .route-cell { font-family: ui-monospace, Consolas, monospace; color: var(--text); }
+  .evidence { color: var(--muted); font-size: .98rem; }
+  .empty { background: var(--panel); border: 2px dashed var(--line); border-radius: 10px;
+           padding: 3rem; text-align: center; font-size: 1.5rem; color: var(--muted); }
+  footer { margin-top: 3rem; color: var(--muted); font-size: .95rem; }
+</style>
+</head>
+<body data-state="{{ state }}">
+
+<nav><a href="/">Home</a><a href="/products">Products</a><a href="/security">Security</a></nav>
+
+<div class="banner">
+  <p class="headline">{{ headline }}</p>
+  <p class="subtitle">{{ subtitle }}</p>
+  <p class="meta">
+    {% if data.get("unreachable") %}
+      forge-control at the configured address did not answer. {{ data.get("error", "") }}
+    {% elif data.get("audited") %}
+      Last audit of {{ data.get("base_url", "the app") }} took {{ data.get("duration_ms") }}ms.
+      {{ data.get("open_count", 0) }} open,
+      {{ data.get("suppressed_count", 0) }} dismissed with a written reason.
+      This page refreshes every {{ refresh }} seconds.
+    {% else %}
+      Green here means checked and clean. Nothing has been checked yet.
+    {% endif %}
+  </p>
+</div>
+
+<div class="tallies">
+  <div class="tally high"><span class="n">{{ totals.get("HIGH", 0) }}</span><span class="k">High</span></div>
+  <div class="tally med"><span class="n">{{ totals.get("MED", 0) }}</span><span class="k">Medium</span></div>
+  <div class="tally low"><span class="n">{{ totals.get("LOW", 0) }}</span><span class="k">Low</span></div>
+</div>
+
+{% if routes %}
+<h2>Grade per page</h2>
+<div class="grades">
+  {% for row in routes %}
+  <div class="grade">
+    <span class="badge {{ row.grade }}">{{ row.grade|upper }}</span>
+    <span class="route">{{ row.route }}</span>
+    <span class="counts">{{ row.counts.HIGH }} high &middot; {{ row.counts.MED }} med &middot; {{ row.counts.LOW }} low</span>
+  </div>
+  {% endfor %}
+</div>
+{% endif %}
+
+<h2>Open findings</h2>
+{% if findings %}
+<table>
+  <thead>
+    <tr><th>Severity</th><th>Check</th><th>Route</th><th>What was observed</th><th>Status</th></tr>
+  </thead>
+  <tbody>
+  {% for finding in findings %}
+    <tr class="{{ finding.status }}">
+      <td><span class="sev {{ finding.severity }}">{{ finding.severity }}</span></td>
+      <td class="check">{{ finding.check_id }}</td>
+      <td class="route-cell">{{ finding.route }}</td>
+      <td>
+        {{ finding.title }}
+        <div class="evidence">{{ finding.evidence }}</div>
+      </td>
+      <td>{{ finding.status }}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<div class="empty">
+  {% if data.get("audited") %}
+    Nothing open. Every check passed on the last audit.
+  {% else %}
+    No findings to show, because no audit has run yet.
+  {% endif %}
+</div>
+{% endif %}
+
+<footer>Audited by FORGE against the seventeen checks in policy/audit_policy.yaml.</footer>
+
+</body>
+</html>

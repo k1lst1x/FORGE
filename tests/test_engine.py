@@ -190,3 +190,79 @@ def test_every_run_closes_with_an_audit_record():
         assert cr.stage == "AUDIT", "AUDIT closes every run, declined ones included"
         assert cr.trace_id, "every run carries a trace id for the SigNoz deep link"
         assert cr.finished_at is not None
+
+
+# --------------------------------------------------------------- Loop A --
+FEATURE_PLAN = ChangeSet(
+    [
+        {"path": "pulse/routes/stock.py",
+         "content": '@router.get("/stock-alerts")\ndef stock(): ...', "reason": "the new route"},
+        {"path": "pulse/templates/stock.html", "content": "<h1>Out of stock</h1>", "reason": "template"},
+        {"path": "tests/test_stock.py", "content": "def test_s(): assert True", "reason": "test"},
+    ],
+    rationale="Adds the out-of-stock page.",
+    test_included=True,
+)
+
+
+def test_a_brief_and_a_finding_walk_the_same_steps(monkeypatch):
+    """The claim the whole project rests on, as an assertion rather than a slogan."""
+    seen = {}
+
+    def record(name):
+        original = getattr(engine, name)
+
+        def wrapped(cr, *a, **k):
+            seen.setdefault(cr.intake, []).append(name)
+            return original(cr, *a, **k)
+
+        monkeypatch.setattr(engine, name, wrapped)
+
+    for step in ("intake", "context", "triage", "plan", "act", "verify", "gate", "release", "close_out"):
+        record(step)
+
+    engine.run_from_finding(_finding())
+    engine.run_from_brief("Add a page showing out-of-stock products.")
+
+    assert seen["brief"] == seen["finding"], "same steps, same order, both loops"
+    assert seen["brief"] == ["intake", "context", "triage", "plan", "act", "verify",
+                             "gate", "release", "close_out"]
+
+
+def test_a_brief_ships_through_the_same_human_gate(monkeypatch):
+    monkeypatch.setattr("forge.portal.wait_for_approval", lambda approval_id: False)
+    cr = engine.run_from_brief("Add a page showing out-of-stock products.")
+    assert cr.approved is False
+    assert cr.outcome == "rejected_by_human", "Loop A cannot merge without a human either"
+
+
+def test_the_page_the_factory_just_built_is_what_gets_audited(monkeypatch):
+    """The video line, as a test. The generated route joins what is maintained."""
+    monkeypatch.setattr("forge.engine.planner.plan_feature", lambda *a, **k: FEATURE_PLAN)
+    audited = {}
+
+    def capture(base_url=None, routes=None, **kw):
+        audited["routes"] = list(routes or [])
+        return AuditResult(routes_checked=list(routes or []), grades={})
+
+    monkeypatch.setattr("forge.engine.audit_mod.run_audit", capture)
+
+    cr = engine.run_from_brief("Add a page showing out-of-stock products.")
+    assert cr.context["created_routes"] == ["/stock-alerts"]
+    assert "/stock-alerts" in audited["routes"], "the new page is audited on the way out"
+    assert "/" in audited["routes"], "and app-level findings keep a stable identity"
+
+
+def test_a_brief_never_audits_file_paths_as_routes(monkeypatch):
+    """Regression: context['existing_routes'] holds file paths. Auditing those
+    would fetch /pulse/routes/products.py and report nonsense."""
+    monkeypatch.setattr("forge.engine.planner.plan_feature", lambda *a, **k: FEATURE_PLAN)
+    audited = {}
+    monkeypatch.setattr(
+        "forge.engine.audit_mod.run_audit",
+        lambda base_url=None, routes=None, **kw: (audited.setdefault("routes", list(routes or [])),
+                                                  AuditResult(grades={}))[1],
+    )
+    engine.run_from_brief("Add a page.")
+    assert not any(r.endswith(".py") for r in audited["routes"])
+    assert all(r.startswith("/") for r in audited["routes"])

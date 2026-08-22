@@ -11,7 +11,7 @@ MODE ?= 1
 ROUTES ?= / /products
 URL ?= http://localhost:8100
 
-.PHONY: help up audit brief inject restore inject-status inject-smoke triage-smoke test trace clean
+.PHONY: help up audit brief inject restore inject-status inject-smoke triage-smoke test trace clean security-preview
 
 help:
 	@echo "  make audit                 run the 17 checks once against $(URL)"
@@ -57,3 +57,6 @@ trace:
 clean:
 	$(PY) -m forge.inject --restore || true
 	rm -rf .forge_inject .pytest_cache
+
+security-preview:
+	$(PY) scripts/security_preview.py --url $(URL)

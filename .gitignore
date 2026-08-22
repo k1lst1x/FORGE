@@ -177,3 +177,4 @@ frontend/.vite/
 .DS_Store
 forge_state.json
 .forge_inject/
+security_preview.html

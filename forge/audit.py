@@ -48,6 +48,16 @@ BAD_ROUTE = "/__forge_audit_probe__"  # deliberately bad route, for S11
 
 _POLICY_CACHE: dict[str, dict] = {}
 
+#: The most recent audit, so the security page can show what was last observed
+#: rather than re-auditing on every page load. None until the first run -- which
+#: is a different state from "clean", and the page says so.
+_LAST_RESULT = None
+
+
+def last_result():
+    """The most recent AuditResult, or None if no audit has run yet."""
+    return _LAST_RESULT
+
 
 def load_policy(path: str | None = None) -> dict:
     """Load and index the policy. The 17 checks are data, not code."""
@@ -506,6 +516,9 @@ def run_audit(base_url: str | None = None, routes: list[str] | None = None, poli
         telemetry.histogram("forge_audit_duration_ms", duration_ms, routes=len(routes))
         for route, grade in grades.items():
             telemetry.gauge("forge_security_grade", GRADE_VALUE.get(grade, 0), route=route)
+
+        global _LAST_RESULT
+        _LAST_RESULT = result
 
         log.info(
             "audit of %s: %s findings (%s HIGH) across %s routes in %sms, worst grade %s",
