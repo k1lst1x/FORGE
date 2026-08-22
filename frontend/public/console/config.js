@@ -7,10 +7,30 @@
  *     /console?demo=1                        force the offline dataset
  *     /console?noauth=1                      skip the Supabase gate for this load
  */
+/*
+ * frontend/public/console/config.js
+ *
+ * Two ways to configure, in priority order:
+ *
+ *   1. frontend/.env  (see .env.example) -- VITE_SUPABASE_URL and
+ *      VITE_SUPABASE_ANON_KEY. Preferred: keeps the values out of git.
+ *   2. The literals below -- for opening the page straight from disk, with
+ *      no Vite and no build.
+ *
+ * Anything left as an unreplaced "%VITE_...%" placeholder counts as unset.
+ */
+(function () {
+  var env = window.FORGE_ENV || {};
+  function fromEnv(key) {
+    var v = env[key];
+    if (typeof v !== 'string' || !v || v.charAt(0) === '%') return '';
+    return v;
+  }
+
 window.FORGE_CONFIG = {
   // Base URL for forge-control. '' means same origin, which is the case when
   // forge-control serves this directory at GET /console.
-  apiBase: '',
+  apiBase: fromEnv('apiBase') || '',
 
   // ---------------------------------------------------------------------
   // SUPABASE AUTH -- the only two values you need to fill in.
@@ -20,8 +40,8 @@ window.FORGE_CONFIG = {
   // Both blank -> the dashboard runs open and says "auth not configured".
   // Both set   -> it gates on a real session and sends the JWT on every call.
   // ---------------------------------------------------------------------
-  supabaseUrl: '',
-  supabaseAnonKey: '',
+  supabaseUrl: fromEnv('supabaseUrl') || '',
+  supabaseAnonKey: fromEnv('supabaseAnonKey') || '',
 
   // Where an entity's canonical record lives. {id} is substituted.
   portRunUrl: 'https://app.getport.io/factory_runEntity?identifier={id}',
@@ -37,3 +57,4 @@ window.FORGE_CONFIG = {
   pollRunsMs: 5000,
   pollCatalogMs: 10000,
 };
+})();

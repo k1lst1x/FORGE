@@ -180,6 +180,20 @@
   </main>
 </div>
 
+<!--
+  Vite substitutes %VITE_*% in HTML entry files, which is the only way an env
+  var can reach public/ -- files there are served verbatim and never processed.
+  Unset vars stay as the literal "%VITE_...%", so config.js ignores any value
+  still starting with "%". Opening this file straight from disk is therefore
+  harmless: it just falls back to the literals in config.js.
+-->
+<script>
+  window.FORGE_ENV = {
+    supabaseUrl: "%VITE_SUPABASE_URL%",
+    supabaseAnonKey: "%VITE_SUPABASE_ANON_KEY%",
+    apiBase: "%VITE_FORGE_CONTROL_URL%",
+  };
+</script>
 <script src="/console/config.js"></script>
 <script src="/console/demo-data.js"></script>
 <script src="/console/chat-input.js"></script>
