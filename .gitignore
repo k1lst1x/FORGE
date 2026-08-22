@@ -183,3 +183,5 @@ security_preview.html
 .forge_state/
 security_live.html
 security_preview.html
+.forge_worktree/
+.forge_state/

@@ -31,14 +31,20 @@ STUB = False
 WRITABLE_PREFIXES = ("pulse/", "tests/")
 MAIN = os.getenv("FORGE_MAIN_BRANCH", "main")
 
+#: The factory works in its OWN git worktree, never in the checkout a human is
+#: using. It ran `git checkout -b` in the shared tree once and moved a
+#: developer onto a factory branch mid-edit -- a worktree makes that
+#: structurally impossible, and lets an audit run while someone is working.
+WORKTREE = Path(os.getenv("FORGE_WORKTREE", str(config.REPO_ROOT / ".forge_worktree")))
+
 
 class VcsError(RuntimeError):
     pass
 
 
-def _git(*args, check: bool = True) -> str:
+def _git(*args, check: bool = True, cwd: Path | None = None) -> str:
     result = subprocess.run(
-        ["git", *args], cwd=str(config.REPO_ROOT), capture_output=True, text=True, timeout=60
+        ["git", *args], cwd=str(cwd or config.REPO_ROOT), capture_output=True, text=True, timeout=60
     )
     if check and result.returncode != 0:
         raise VcsError(f"git {' '.join(args)} failed: {(result.stderr or result.stdout).strip()}")
@@ -62,16 +68,20 @@ def repo_slug() -> str | None:
 
 
 def create_branch(name: str) -> str:
-    """A fresh branch off main. Re-running a fix reuses the name, so delete first."""
+    """A fresh branch off main, in the factory's own worktree.
+
+    The human's checkout is never touched: no checkout, no branch switch, no
+    stash. Two runs cannot collide either, because the worktree is recreated.
+    """
     branch = f"forge/{name}"
     _git("fetch", "origin", check=False)
-    try:
-        _git("checkout", MAIN)
-    except VcsError:
-        log.warning("could not check out %s; branching from HEAD", MAIN)
+    if WORKTREE.exists():
+        _git("worktree", "remove", "--force", str(WORKTREE), check=False)
+    _git("worktree", "prune", check=False)
     _git("branch", "-D", branch, check=False)
-    _git("checkout", "-b", branch)
-    log.info("on branch %s", branch)
+    base = MAIN if _git("rev-parse", "--verify", MAIN, check=False) else "HEAD"
+    _git("worktree", "add", "-B", branch, str(WORKTREE), base)
+    log.info("factory worktree at %s on %s (from %s)", WORKTREE, branch, base)
     return branch
 
 
@@ -82,7 +92,7 @@ def write_files(changeset: list[dict]) -> list[str]:
         if not raw.startswith(WRITABLE_PREFIXES) or ".." in raw:
             log.error("REFUSED write outside pulse/ and tests/: %s", raw)
             raise VcsError(f"refused to write {raw}: the factory cannot modify its own source")
-        target = config.REPO_ROOT / raw
+        target = (WORKTREE if WORKTREE.exists() else config.REPO_ROOT) / raw
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(change.get("content", ""), encoding="utf-8")
         written.append(raw)
@@ -91,16 +101,17 @@ def write_files(changeset: list[dict]) -> list[str]:
 
 
 def commit_and_push(branch: str, message: str) -> str:
-    if current_branch() in (MAIN, "HEAD"):
+    tree = WORKTREE if WORKTREE.exists() else config.REPO_ROOT
+    if _git("rev-parse", "--abbrev-ref", "HEAD", cwd=tree) in (MAIN, "HEAD"):
         raise VcsError("refusing to commit on main")
-    _git("add", "--", "pulse", "tests")
-    if not _git("status", "--porcelain"):
+    _git("add", "--", "pulse", "tests", cwd=tree)
+    if not _git("status", "--porcelain", cwd=tree):
         raise VcsError("nothing to commit -- the changeset produced no on-disk change")
-    _git("-c", "user.name=FORGE", "-c", "user.email=forge@local", "commit", "-m", message)
-    sha = _git("rev-parse", "--short", "HEAD")
+    _git("-c", "user.name=FORGE", "-c", "user.email=forge@local", "commit", "-m", message, cwd=tree)
+    sha = _git("rev-parse", "--short", "HEAD", cwd=tree)
     if config.GITHUB_TOKEN:
         try:
-            _git("push", "-u", "origin", branch, "--force-with-lease")
+            _git("push", "-u", "origin", branch, "--force-with-lease", cwd=tree)
             log.info("pushed %s (%s)", branch, sha)
         except VcsError as exc:
             log.warning("push failed, branch stays local: %s", exc)
@@ -142,20 +153,29 @@ def open_pr(branch: str, title: str, body: str) -> str:
 
 
 def merge_pr(pr_url: str) -> bool:
-    """Merge. A local-only branch is merged locally so the app really updates."""
-    branch = current_branch()
-    if pr_url and pr_url.startswith("local-branch:"):
-        branch = pr_url.split(":", 1)[1]
+    """Merge the factory's branch into main, in the main checkout.
+
+    The human's branch is restored afterwards -- merging must not leave anyone
+    standing somewhere they did not choose to be.
+    """
+    branch = pr_url.split(":", 1)[1] if (pr_url or "").startswith("local-branch:") else None
+    branch = branch or _git("rev-parse", "--abbrev-ref", "HEAD",
+                            cwd=WORKTREE if WORKTREE.exists() else None)
+    was_on = current_branch()
     try:
         _git("checkout", MAIN)
         _git("merge", "--no-ff", branch, "-m", f"Merge {branch}")
         log.info("merged %s into %s", branch, MAIN)
-        if config.GITHUB_TOKEN and not pr_url.startswith("local-branch:"):
+        if config.GITHUB_TOKEN and not (pr_url or "").startswith("local-branch:"):
             _git("push", "origin", MAIN, check=False)
         return True
     except VcsError as exc:
         log.error("merge failed: %s", exc)
         return False
+    finally:
+        if was_on and was_on not in (MAIN, "HEAD"):
+            _git("checkout", was_on, check=False)
+        _git("worktree", "remove", "--force", str(WORKTREE), check=False)
 
 
 def reset_to_main() -> bool:
