@@ -72,7 +72,7 @@ def _configure_signoz() -> bool:
             print(
                 f"[telemetry] SigNoz rejected the ingestion key at {endpoint_base} "
                 f"({probe.status_code}). Traces stay local. Check SIGNOZ_INGESTION_KEY and "
-                "SIGNOZ_REGION (us | eu | in).",
+                "SIGNOZ_REGION (us | us2 | eu | in).",
                 file=sys.stderr,
             )
             return False
@@ -97,6 +97,29 @@ def _configure_signoz() -> bool:
             )
         )
         _trace.set_tracer_provider(provider)
+
+        # Metrics too. forge_security_grade is what the SigNoz alert watches,
+        # and an alert with no metric behind it never fires -- traces alone
+        # would look like it was working right up until the demo.
+        try:
+            from opentelemetry.exporter.otlp.proto.http.metric_exporter import OTLPMetricExporter
+            from opentelemetry.sdk.metrics import MeterProvider
+            from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
+
+            reader = PeriodicExportingMetricReader(
+                OTLPMetricExporter(
+                    endpoint=f"{endpoint}/v1/metrics",
+                    headers={"signoz-ingestion-key": config.SIGNOZ_INGESTION_KEY},
+                ),
+                export_interval_millis=int(os.getenv("FORGE_METRIC_INTERVAL_MS", "15000")),
+            )
+            _metrics.set_meter_provider(
+                MeterProvider(resource=Resource.create({"service.name": SERVICE_NAME}),
+                              metric_readers=[reader])
+            )
+        except Exception as exc:
+            print(f"[telemetry] metrics export unavailable: {exc}", file=sys.stderr)
+
         os.environ["FORGE_OTEL_CONFIGURED"] = "1"
         return True
     except Exception as exc:  # telemetry must never take the factory down
@@ -113,7 +136,7 @@ _tracer = _trace.get_tracer("forge") if _OTEL else None
 def exporting() -> bool:
     """True when spans are actually leaving this process."""
     return bool(_SIGNOZ)
-_meter = _metrics.get_meter("forge") if _OTEL else None
+_meter = _metrics.get_meter("forge") if _OTEL else None  # rebound below once configured
 _instruments: dict[str, object] = {}
 
 
@@ -221,11 +244,20 @@ def current_trace_id() -> str | None:
         return None
 
 
+def _meter_now():
+    """Fetch the meter lazily: binding it at import time would capture the
+    no-op provider that exists before _configure_signoz() runs."""
+    global _meter
+    if _OTEL:
+        _meter = _metrics.get_meter("forge")
+    return _meter
+
+
 def counter(name: str, value: int = 1, **labels) -> None:
     if _OTEL:
         inst = _instruments.get(f"c:{name}")
         if inst is None:
-            inst = _meter.create_counter(name)
+            inst = _meter_now().create_counter(name)
             _instruments[f"c:{name}"] = inst
         inst.add(value, {k: str(v) for k, v in labels.items()})
     if os.getenv("FORGE_METRICS_CONSOLE") in ("1", "true"):
@@ -236,7 +268,7 @@ def histogram(name: str, value: float, **labels) -> None:
     if _OTEL:
         inst = _instruments.get(f"h:{name}")
         if inst is None:
-            inst = _meter.create_histogram(name)
+            inst = _meter_now().create_histogram(name)
             _instruments[f"h:{name}"] = inst
         inst.record(value, {k: str(v) for k, v in labels.items()})
     if os.getenv("FORGE_METRICS_CONSOLE") in ("1", "true"):
@@ -249,9 +281,9 @@ def gauge(name: str, value: float, **labels) -> None:
         inst = _instruments.get(f"g:{name}")
         if inst is None:
             try:
-                inst = _meter.create_gauge(name)
+                inst = _meter_now().create_gauge(name)
             except Exception:  # older SDKs
-                inst = _meter.create_histogram(name)
+                inst = _meter_now().create_histogram(name)
             _instruments[f"g:{name}"] = inst
         inst.set(value, {k: str(v) for k, v in labels.items()}) if hasattr(inst, "set") else inst.record(
             value, {k: str(v) for k, v in labels.items()}

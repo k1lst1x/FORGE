@@ -93,9 +93,20 @@ async def intake_finding(payload: dict, background: BackgroundTasks):
 @app.get("/health")
 def health():
     audit_state = scheduler.state()
+    from forge import llm, telemetry
+
     return {
         "ok": True,
         "pulse": config.PULSE_BASE_URL,
+        "telemetry": {
+            "exporting_to_signoz": telemetry.exporting(),
+            "region": config.SIGNOZ_REGION,
+        },
+        "llm": {
+            "provider": llm.provider(),
+            "spend_usd": llm.budget_status()["spend_usd"],
+            "budget_usd": llm.budget_status()["budget_usd"],
+        },
         "scheduler": audit_state,
         "open_findings": len(store.open_findings()),
         "pending_approvals": len(approvals.pending()),
