@@ -1,6 +1,8 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
+from pydantic import BaseModel, Field
 
-from app.factory import engine, scheduler, store
+from app.auth import require_auth
+from app.factory import engine, observability, scheduler, store
 from app.factory.models import (
     FactoryRun,
     FactoryRunCreate,
@@ -8,8 +10,18 @@ from app.factory.models import (
     FactoryRunStatus,
     Finding,
 )
+from app.factory.project_record import PROJECT_RECORD
+from app.factory.scorecards import PORT_SCORECARD
 
-router = APIRouter(prefix="/factory", tags=["factory"])
+router = APIRouter(
+    prefix="/factory",
+    tags=["factory"],
+    dependencies=[Depends(require_auth)],
+)
+
+
+class InjectRequest(BaseModel):
+    mode: int = Field(ge=1, le=4)
 
 
 @router.get("/runs", response_model=list[FactoryRun])
@@ -102,3 +114,48 @@ async def stop_audit_scheduler() -> dict[str, object]:
 @router.get("/audit/status")
 def audit_scheduler_status() -> dict[str, object]:
     return scheduler.status()
+
+
+@router.get("/observability")
+def observability_snapshot() -> dict[str, object]:
+    return observability.snapshot()
+
+
+@router.get("/scorecards")
+def list_scorecards() -> dict[str, object]:
+    snapshot = observability.snapshot()
+    return {"rules": PORT_SCORECARD, "pages": snapshot["scorecards"]}
+
+
+@router.get("/project")
+def project_record() -> dict[str, object]:
+    return PROJECT_RECORD
+
+
+@router.post("/inject")
+def inject_defect(payload: InjectRequest) -> dict[str, object]:
+    try:
+        return observability.inject(payload.mode)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post("/restore")
+def restore_injected_defects() -> dict[str, object]:
+    return observability.restore()
+
+
+@router.post("/port/bootstrap")
+def bootstrap_port_catalog() -> dict[str, object]:
+    from app.factory.port_catalog import bootstrap
+
+    return bootstrap()
+
+
+@router.post("/intake/finding")
+def intake_finding(
+    payload: dict,
+    background_tasks: BackgroundTasks,
+) -> dict[str, object]:
+    background_tasks.add_task(observability.ingest_alert, payload)
+    return {"accepted": True, "message": "Finding intake queued."}

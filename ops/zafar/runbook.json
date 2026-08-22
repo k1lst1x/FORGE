@@ -1,0 +1,15 @@
+{
+  "first": "Start bdata scraper create against a real public URL before any dashboard work. 5-25 minutes.",
+  "order": [
+    "Import ops/zafar/signoz-dashboard.json in SigNoz → Dashboards → New → Import JSON.",
+    "Create the metric alert from ops/zafar/signoz-alert.json. Distinct name per route. Condition: min(forge_security_grade) below 2, 1 minute.",
+    "Add webhook channel https://<tunnel>/factory/intake/finding with Damir's basic auth. Press Test.",
+    "Create Port blueprints from ops/zafar/port-blueprints.json.",
+    "Create the Security Posture scorecard from ops/zafar/port-scorecard.json on the page blueprint.",
+    "Paste ops/zafar/port-project-record.json into the project entity.",
+    "Rehearse inject: POST /factory/inject {\"mode\":1|2|3|4} then POST /factory/restore. Mode 4 must stay UPSTREAM_OUTAGE."
+  ],
+  "checkpoint_1515": "Alert has fired for real at least once. Loop B unattended.",
+  "never_cut": "Five-panel dashboard + one real firing alert.",
+  "cut_if_late": "A sixth panel, visual polish, then scorecards, then project record — never the alert."
+}

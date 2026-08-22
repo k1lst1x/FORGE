@@ -1,0 +1,449 @@
+{
+  "schemaVersion": "v6",
+  "image": "/assets/Icons/eight-ball",
+  "generateName": true,
+  "tags": [
+    { "key": "tag", "value": "forge" },
+    { "key": "tag", "value": "loop-b" }
+  ],
+  "spec": {
+    "display": {
+      "name": "FORGE Loop B",
+      "description": "Five panels. A stranger should see what is wrong in under ten seconds. Resist a sixth."
+    },
+    "variables": [
+      {
+        "kind": "ListVariable",
+        "spec": {
+          "display": {
+            "name": "route",
+            "description": "Pulse route the factory registered in Port"
+          },
+          "allowAllValue": true,
+          "allowMultiple": true,
+          "customAllValue": "",
+          "capturingRegexp": "",
+          "sort": "none",
+          "plugin": {
+            "kind": "signoz/DynamicVariable",
+            "spec": { "name": "route", "signal": "metrics" }
+          },
+          "name": "route"
+        }
+      }
+    ],
+    "panels": {
+      "a1a1a1a1-1111-4111-8111-111111111111": {
+        "kind": "Panel",
+        "spec": {
+          "display": {
+            "name": "1 · Security grade over time, per route",
+            "description": "forge_security_grade. Gold=3 Silver=2 Bronze=1. Injection is a cliff; the fix is a recovery."
+          },
+          "plugin": {
+            "kind": "signoz/TimeSeriesPanel",
+            "spec": {
+              "visualization": { "timePreference": "global_time", "fillSpans": true },
+              "formatting": { "unit": "none", "decimalPrecision": "0" },
+              "chartAppearance": {
+                "lineInterpolation": "linear",
+                "showPoints": true,
+                "lineStyle": "solid",
+                "fillMode": "none",
+                "spanGaps": { "fillOnlyBelow": false, "fillLessThan": "" }
+              },
+              "axes": { "softMin": 1, "softMax": 3, "isLogScale": false },
+              "legend": { "position": "bottom", "mode": "list", "customColors": null },
+              "thresholds": [
+                { "value": 2, "label": "Silver", "color": "#d97706" }
+              ]
+            }
+          },
+          "queries": [
+            {
+              "kind": "time_series",
+              "spec": {
+                "plugin": {
+                  "kind": "signoz/CompositeQuery",
+                  "spec": {
+                    "queries": [
+                      {
+                        "type": "builder_query",
+                        "spec": {
+                          "name": "A",
+                          "stepInterval": 60,
+                          "signal": "metrics",
+                          "source": "",
+                          "aggregations": [
+                            {
+                              "metricName": "forge_security_grade",
+                              "temporality": "",
+                              "timeAggregation": "min",
+                              "spaceAggregation": "min",
+                              "reduceTo": "min"
+                            }
+                          ],
+                          "disabled": false,
+                          "filter": { "expression": "route IN $route" },
+                          "groupBy": [{ "key": { "name": "route" } }],
+                          "order": [],
+                          "limit": 30,
+                          "having": { "expression": "" },
+                          "functions": [],
+                          "legend": "{{route}}"
+                        }
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+          ],
+          "links": []
+        }
+      },
+      "b2b2b2b2-2222-4222-8222-222222222222": {
+        "kind": "Panel",
+        "spec": {
+          "display": {
+            "name": "2 · Open findings by severity",
+            "description": "forge_findings_open stacked by severity. App posture at a glance."
+          },
+          "plugin": {
+            "kind": "signoz/TimeSeriesPanel",
+            "spec": {
+              "visualization": { "timePreference": "global_time", "fillSpans": true },
+              "formatting": { "unit": "none", "decimalPrecision": "0" },
+              "chartAppearance": {
+                "lineInterpolation": "linear",
+                "showPoints": false,
+                "lineStyle": "solid",
+                "fillMode": "solid",
+                "spanGaps": { "fillOnlyBelow": false, "fillLessThan": "" }
+              },
+              "axes": { "softMin": 0, "softMax": 0, "isLogScale": false },
+              "legend": { "position": "bottom", "mode": "list", "customColors": null },
+              "thresholds": null
+            }
+          },
+          "queries": [
+            {
+              "kind": "time_series",
+              "spec": {
+                "plugin": {
+                  "kind": "signoz/CompositeQuery",
+                  "spec": {
+                    "queries": [
+                      {
+                        "type": "builder_query",
+                        "spec": {
+                          "name": "A",
+                          "stepInterval": 60,
+                          "signal": "metrics",
+                          "source": "",
+                          "aggregations": [
+                            {
+                              "metricName": "forge_findings_open",
+                              "temporality": "",
+                              "timeAggregation": "max",
+                              "spaceAggregation": "sum",
+                              "reduceTo": "max"
+                            }
+                          ],
+                          "disabled": false,
+                          "filter": { "expression": "" },
+                          "groupBy": [{ "key": { "name": "severity" } }],
+                          "order": [],
+                          "limit": 10,
+                          "having": { "expression": "" },
+                          "functions": [],
+                          "legend": "{{severity}}"
+                        }
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+          ],
+          "links": []
+        }
+      },
+      "c3c3c3c3-3333-4333-8333-333333333333": {
+        "kind": "Panel",
+        "spec": {
+          "display": {
+            "name": "3 · Triage decisions by classification",
+            "description": "forge_triage_total. Shows the system reasoning, not just running."
+          },
+          "plugin": {
+            "kind": "signoz/TimeSeriesPanel",
+            "spec": {
+              "visualization": { "timePreference": "global_time", "fillSpans": false },
+              "formatting": { "unit": "none", "decimalPrecision": "0" },
+              "chartAppearance": {
+                "lineInterpolation": "linear",
+                "showPoints": false,
+                "lineStyle": "solid",
+                "fillMode": "none",
+                "spanGaps": { "fillOnlyBelow": false, "fillLessThan": "" }
+              },
+              "axes": { "softMin": 0, "softMax": 0, "isLogScale": false },
+              "legend": { "position": "right", "mode": "list", "customColors": null },
+              "thresholds": null
+            }
+          },
+          "queries": [
+            {
+              "kind": "time_series",
+              "spec": {
+                "plugin": {
+                  "kind": "signoz/CompositeQuery",
+                  "spec": {
+                    "queries": [
+                      {
+                        "type": "builder_query",
+                        "spec": {
+                          "name": "A",
+                          "stepInterval": 60,
+                          "signal": "metrics",
+                          "source": "",
+                          "aggregations": [
+                            {
+                              "metricName": "forge_triage_total",
+                              "temporality": "",
+                              "timeAggregation": "increase",
+                              "spaceAggregation": "sum",
+                              "reduceTo": "sum"
+                            }
+                          ],
+                          "disabled": false,
+                          "filter": { "expression": "" },
+                          "groupBy": [{ "key": { "name": "classification" } }],
+                          "order": [],
+                          "limit": 10,
+                          "having": { "expression": "" },
+                          "functions": [],
+                          "legend": "{{classification}}"
+                        }
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+          ],
+          "links": []
+        }
+      },
+      "d4d4d4d4-4444-4444-8444-444444444444": {
+        "kind": "Panel",
+        "spec": {
+          "display": {
+            "name": "4 · Fix outcomes",
+            "description": "forge_fix_outcome_total — attempted / verified / rejected / escalated. Auto-repair as a first-class signal."
+          },
+          "plugin": {
+            "kind": "signoz/TimeSeriesPanel",
+            "spec": {
+              "visualization": { "timePreference": "global_time", "fillSpans": false },
+              "formatting": { "unit": "none", "decimalPrecision": "0" },
+              "chartAppearance": {
+                "lineInterpolation": "linear",
+                "showPoints": false,
+                "lineStyle": "solid",
+                "fillMode": "none",
+                "spanGaps": { "fillOnlyBelow": false, "fillLessThan": "" }
+              },
+              "axes": { "softMin": 0, "softMax": 0, "isLogScale": false },
+              "legend": { "position": "bottom", "mode": "list", "customColors": null },
+              "thresholds": null
+            }
+          },
+          "queries": [
+            {
+              "kind": "time_series",
+              "spec": {
+                "plugin": {
+                  "kind": "signoz/CompositeQuery",
+                  "spec": {
+                    "queries": [
+                      {
+                        "type": "builder_query",
+                        "spec": {
+                          "name": "A",
+                          "stepInterval": 60,
+                          "signal": "metrics",
+                          "source": "",
+                          "aggregations": [
+                            {
+                              "metricName": "forge_fix_outcome_total",
+                              "temporality": "",
+                              "timeAggregation": "increase",
+                              "spaceAggregation": "sum",
+                              "reduceTo": "sum"
+                            }
+                          ],
+                          "disabled": false,
+                          "filter": { "expression": "" },
+                          "groupBy": [{ "key": { "name": "result" } }],
+                          "order": [],
+                          "limit": 10,
+                          "having": { "expression": "" },
+                          "functions": [],
+                          "legend": "{{result}}"
+                        }
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+          ],
+          "links": []
+        }
+      },
+      "e5e5e5e5-5555-4555-8555-555555555555": {
+        "kind": "Panel",
+        "spec": {
+          "display": {
+            "name": "5 · Audit duration p50 / p95",
+            "description": "forge_audit_duration_ms. Pair with recent error logs — click a log line, jump to the trace on camera."
+          },
+          "plugin": {
+            "kind": "signoz/TimeSeriesPanel",
+            "spec": {
+              "visualization": { "timePreference": "global_time", "fillSpans": false },
+              "formatting": { "unit": "ms", "decimalPrecision": "0" },
+              "chartAppearance": {
+                "lineInterpolation": "spline",
+                "showPoints": false,
+                "lineStyle": "solid",
+                "fillMode": "none",
+                "spanGaps": { "fillOnlyBelow": false, "fillLessThan": "" }
+              },
+              "axes": { "softMin": 0, "softMax": 0, "isLogScale": false },
+              "legend": { "position": "bottom", "mode": "list", "customColors": null },
+              "thresholds": null
+            }
+          },
+          "queries": [
+            {
+              "kind": "time_series",
+              "spec": {
+                "plugin": {
+                  "kind": "signoz/CompositeQuery",
+                  "spec": {
+                    "queries": [
+                      {
+                        "type": "builder_query",
+                        "spec": {
+                          "name": "A",
+                          "stepInterval": 60,
+                          "signal": "metrics",
+                          "source": "",
+                          "aggregations": [
+                            {
+                              "metricName": "forge_audit_duration_ms",
+                              "temporality": "",
+                              "timeAggregation": "p50",
+                              "spaceAggregation": "avg",
+                              "reduceTo": "avg"
+                            }
+                          ],
+                          "disabled": false,
+                          "filter": { "expression": "" },
+                          "groupBy": [],
+                          "order": [],
+                          "limit": 30,
+                          "having": { "expression": "" },
+                          "functions": [],
+                          "legend": "p50"
+                        }
+                      },
+                      {
+                        "type": "builder_query",
+                        "spec": {
+                          "name": "B",
+                          "stepInterval": 60,
+                          "signal": "metrics",
+                          "source": "",
+                          "aggregations": [
+                            {
+                              "metricName": "forge_audit_duration_ms",
+                              "temporality": "",
+                              "timeAggregation": "p95",
+                              "spaceAggregation": "avg",
+                              "reduceTo": "avg"
+                            }
+                          ],
+                          "disabled": false,
+                          "filter": { "expression": "" },
+                          "groupBy": [],
+                          "order": [],
+                          "limit": 30,
+                          "having": { "expression": "" },
+                          "functions": [],
+                          "legend": "p95"
+                        }
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+          ],
+          "links": []
+        }
+      }
+    },
+    "layouts": [
+      {
+        "kind": "Grid",
+        "spec": {
+          "display": { "title": "FORGE Loop B", "collapse": { "open": true } },
+          "items": [
+            {
+              "x": 0,
+              "y": 0,
+              "width": 12,
+              "height": 8,
+              "content": { "$ref": "#/spec/panels/a1a1a1a1-1111-4111-8111-111111111111" }
+            },
+            {
+              "x": 0,
+              "y": 8,
+              "width": 6,
+              "height": 6,
+              "content": { "$ref": "#/spec/panels/b2b2b2b2-2222-4222-8222-222222222222" }
+            },
+            {
+              "x": 6,
+              "y": 8,
+              "width": 6,
+              "height": 6,
+              "content": { "$ref": "#/spec/panels/c3c3c3c3-3333-4333-8333-333333333333" }
+            },
+            {
+              "x": 0,
+              "y": 14,
+              "width": 6,
+              "height": 6,
+              "content": { "$ref": "#/spec/panels/d4d4d4d4-4444-4444-8444-444444444444" }
+            },
+            {
+              "x": 6,
+              "y": 14,
+              "width": 6,
+              "height": 6,
+              "content": { "$ref": "#/spec/panels/e5e5e5e5-5555-4555-8555-555555555555" }
+            }
+          ]
+        }
+      }
+    ],
+    "duration": "1h",
+    "refreshInterval": "10s",
+    "links": []
+  }
+}

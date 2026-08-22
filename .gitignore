@@ -132,6 +132,7 @@ venv.bak/
 *.db
 *.db-journal
 backend/data/
+data/
 
 # Spyder project settings
 .spyderproject

@@ -67,6 +67,12 @@ pip install -e ".[dev]"
 fastapi dev app/main.py
 ```
 
+The local operator login is `admin` / `forge-local`. For any shared or deployed
+environment, set `FORGE_AUTH_USERNAME`, `FORGE_AUTH_PASSWORD`, and
+`FORGE_AUTH_SECRET` in the environment before starting the backend. Factory API
+routes require the bearer token returned by `POST /auth/login`; `/health` remains
+public.
+
 Frontend:
 
 ```bash

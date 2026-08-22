@@ -35,6 +35,69 @@ button {
   padding: 56px 0 72px;
 }
 
+.auth-shell {
+  display: grid;
+  min-height: 100vh;
+  place-items: center;
+  padding: 24px;
+}
+
+.auth-card {
+  width: min(100%, 430px);
+  padding: 36px;
+  border: 1px solid #dfe7f1;
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.94);
+  box-shadow: 0 18px 48px rgba(15, 23, 42, 0.1);
+}
+
+.auth-card h1 {
+  margin-top: 14px;
+  font-size: clamp(2.6rem, 10vw, 4.5rem);
+}
+
+.auth-copy {
+  color: #475569;
+  line-height: 1.5;
+}
+
+.auth-form {
+  display: grid;
+  gap: 16px;
+  margin-top: 28px;
+}
+
+.auth-form label {
+  display: grid;
+  gap: 7px;
+  color: #334155;
+  font-size: 0.85rem;
+  font-weight: 700;
+}
+
+.auth-form input {
+  width: 100%;
+  padding: 12px 13px;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  color: #0f172a;
+  background: #f8fafc;
+}
+
+.auth-form .error-banner {
+  margin: 0;
+}
+
+.auth-form button {
+  padding: 12px 16px;
+}
+
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .intro {
   display: grid;
   gap: 16px;
@@ -722,5 +785,249 @@ button:disabled {
   .prompt-ghost,
   .prompt-send-button {
     width: 100%;
+  }
+}
+
+.ops {
+  margin-top: 48px;
+  display: grid;
+  gap: 16px;
+}
+
+.ops-toolbar {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  align-items: end;
+  flex-wrap: wrap;
+}
+
+.ops-kicker {
+  margin: 0 0 6px;
+  color: #5b6472;
+  font-size: 0.8rem;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.ops h2 {
+  margin: 0;
+  font-size: 1.6rem;
+}
+
+.alert-pill {
+  padding: 12px 16px;
+  border-radius: 8px;
+  font-weight: 700;
+  letter-spacing: 0;
+}
+
+.alert-pill.quiet {
+  color: #065f46;
+  background: #d1fae5;
+}
+
+.alert-pill.firing {
+  color: #7f1d1d;
+  background: #fecaca;
+}
+
+.inject-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.inject-row span {
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: #4b5563;
+  margin-right: 4px;
+}
+
+.inject-row button {
+  border: 1px solid #d8dde6;
+  background: #ffffff;
+  color: #111827;
+  border-radius: 6px;
+  padding: 8px 12px;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.inject-row button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.inject-row .restore {
+  color: #065f46;
+  border-color: #6ee7b7;
+}
+
+.panel-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+.panel {
+  padding: 18px;
+  border: 1px solid #d8dde6;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.panel-wide {
+  grid-column: 1 / -1;
+}
+
+.panel h3 {
+  margin: 0 0 6px;
+  font-size: 1.05rem;
+}
+
+.panel-why,
+.status-line {
+  margin: 0 0 12px;
+  color: #4b5563;
+  font-size: 0.95rem;
+}
+
+.grade-row {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.grade-card {
+  padding: 16px;
+  border-radius: 8px;
+  min-height: 120px;
+}
+
+.grade-gold {
+  background: #fef3c7;
+  color: #78350f;
+}
+
+.grade-silver {
+  background: #e5e7eb;
+  color: #111827;
+}
+
+.grade-bronze {
+  background: #ffedd5;
+  color: #7c2d12;
+}
+
+.grade-route {
+  margin: 0;
+  font-weight: 700;
+  font-size: 0.9rem;
+}
+
+.grade-value {
+  margin: 8px 0 4px;
+  font-size: 2.4rem;
+  line-height: 1;
+  font-weight: 800;
+}
+
+.grade-meta {
+  margin: 0;
+  font-size: 0.85rem;
+}
+
+.stack {
+  display: flex;
+  height: 18px;
+  border-radius: 4px;
+  overflow: hidden;
+  background: #eef2f7;
+  margin-bottom: 10px;
+}
+
+.stack-seg {
+  display: block;
+  height: 100%;
+}
+
+.stack-seg.high,
+.spark-bar.grade-bronze {
+  background: #dc2626;
+}
+
+.stack-seg.med {
+  background: #d97706;
+}
+
+.stack-seg.low {
+  background: #64748b;
+}
+
+.stack-seg.gold,
+.spark-bar.grade-gold {
+  background: #ca8a04;
+}
+
+.spark-bar.grade-silver {
+  background: #6b7280;
+}
+
+.count-list,
+.finding-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+}
+
+.count-list li {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 0.92rem;
+}
+
+.finding-list li {
+  font-size: 0.9rem;
+  color: #374151;
+  line-height: 1.4;
+}
+
+.duration {
+  margin: 0 0 10px;
+  font-size: 1.15rem;
+  font-weight: 700;
+}
+
+.spark {
+  display: flex;
+  align-items: end;
+  gap: 4px;
+  height: 64px;
+  margin-top: 14px;
+}
+
+.spark-bar {
+  flex: 1;
+  min-width: 8px;
+  border-radius: 2px 2px 0 0;
+}
+
+.project-panel p {
+  margin: 0 0 10px;
+  color: #263241;
+  line-height: 1.5;
+}
+
+@media (max-width: 860px) {
+  .panel-grid,
+  .grade-row {
+    grid-template-columns: 1fr;
   }
 }

@@ -1,0 +1,50 @@
+{
+  "alert": "forge-security-grade-below-silver",
+  "alertType": "METRIC_BASED_ALERT",
+  "ruleType": "threshold_rule",
+  "severity": "critical",
+  "evalWindow": "1m0s",
+  "frequency": "1m0s",
+  "condition": {
+    "compositeQuery": {
+      "queryType": "builder",
+      "panelType": "graph",
+      "queries": [
+        {
+          "type": "builder_query",
+          "spec": {
+            "name": "A",
+            "signal": "metrics",
+            "aggregations": [
+              {
+                "metricName": "forge_security_grade",
+                "timeAggregation": "min",
+                "spaceAggregation": "min"
+              }
+            ],
+            "groupBy": [{ "key": { "name": "route" } }],
+            "legend": "{{route}}"
+          }
+        }
+      ]
+    },
+    "op": "<",
+    "target": 2,
+    "matchType": "1",
+    "selectedQueryName": "A"
+  },
+  "labels": {
+    "severity": "critical"
+  },
+  "annotations": {
+    "summary": "Security grade dropped to Bronze on {{$labels.route}}",
+    "description": "forge_security_grade min over 1m fell below 2 (Silver). This webhook is the Loop B trigger, not a notification. Distinct alert name per route so groups do not merge."
+  },
+  "channel": {
+    "type": "webhook",
+    "url": "https://<tunnel-url>/factory/intake/finding",
+    "auth": "basic — username/password from Damir",
+    "test": "Press Test and confirm a 200 {accepted: true} before trusting it."
+  },
+  "honest_limitation": "SigNoz alert manager groups webhooks on roughly a 5-minute cycle. The scheduler also checks grades every 60s and POSTs the same handler. Document this; do not hide it."
+}

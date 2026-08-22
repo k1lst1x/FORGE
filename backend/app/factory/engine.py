@@ -47,6 +47,28 @@ def run_from_brief(*, brief: str, trigger: str = "manual") -> ChangeRequest:
     return cr
 
 
+def run_from_finding(*, finding: dict, trigger: str = "signoz") -> ChangeRequest:
+    run_id = f"run_{uuid4().hex[:12]}"
+    title = str(finding.get("title") or "Audit finding")
+    store.create_run(
+        run_id=run_id,
+        title=title,
+        brief=title,
+        trigger=trigger,
+        intake=IntakeType.finding,
+    )
+    cr = ChangeRequest(
+        run_id=run_id,
+        intake=IntakeType.finding,
+        title=title,
+        finding=finding,
+        trace_id=telemetry.new_trace_id(),
+    )
+    store.update_run(run_id, trace_id=cr.trace_id)
+    execute(cr)
+    return cr
+
+
 def execute(cr: ChangeRequest) -> ChangeRequest:
     for stage in STAGES:
         _run_stage(cr, stage)
@@ -94,7 +116,8 @@ def _handle_stage(cr: ChangeRequest, stage: str) -> str:
             store.update_run(cr.run_id, status=FactoryRunStatus.triaging)
             cr.classification = TriageClassification.autofix_safe
             cr.should_act = True
-            return "Classified as AUTOFIX_SAFE for the stub loop."
+            store.update_run(cr.run_id, classification=cr.classification)
+            return f"Classified as {cr.classification.value} for the stub loop."
         case "plan":
             cr.changeset = [
                 {

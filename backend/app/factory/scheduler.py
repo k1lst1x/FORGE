@@ -86,6 +86,9 @@ async def run_once() -> str:
         )
         _last_run_id = cr.run_id
         _last_error = None
+        from app.factory.observability import publish_after_audit
+
+        publish_after_audit()
         return cr.run_id
     except Exception as exc:
         _failures += 1

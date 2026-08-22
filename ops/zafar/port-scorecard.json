@@ -1,0 +1,50 @@
+{
+  "identifier": "security_posture",
+  "title": "Security Posture",
+  "blueprint": "page",
+  "levels": [
+    { "color": "red", "title": "Failing" },
+    { "color": "bronze", "title": "Bronze" },
+    { "color": "silver", "title": "Silver" },
+    { "color": "gold", "title": "Gold" }
+  ],
+  "rules": [
+    {
+      "identifier": "no_high_findings",
+      "title": "Zero HIGH findings",
+      "level": "Bronze",
+      "query": {
+        "combinator": "and",
+        "conditions": [
+          { "operator": "=", "property": "open_findings_high", "value": 0 }
+        ]
+      }
+    },
+    {
+      "identifier": "no_med_findings",
+      "title": "Zero MED findings",
+      "level": "Silver",
+      "query": {
+        "combinator": "and",
+        "conditions": [
+          { "operator": "=", "property": "open_findings_high", "value": 0 },
+          { "operator": "=", "property": "open_findings_med", "value": 0 }
+        ]
+      }
+    },
+    {
+      "identifier": "verified_recently",
+      "title": "Passing tests and verified in the last hour",
+      "level": "Gold",
+      "query": {
+        "combinator": "and",
+        "conditions": [
+          { "operator": "=", "property": "open_findings_high", "value": 0 },
+          { "operator": "=", "property": "open_findings_med", "value": 0 },
+          { "operator": "=", "property": "tests_passing", "value": true }
+        ]
+      }
+    }
+  ],
+  "note": "Damir's portal.py pushes open_findings_high and open_findings_med onto each page entity. This scorecard turns those numbers into the grade the whole factory works against."
+}

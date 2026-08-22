@@ -83,10 +83,10 @@
   })();
 
   var EXAMPLE_BRIEFS = [
-    'Add a /pricing page with three plan tiers, a monthly/yearly toggle, and a comparison table. Every plan needs a name, a price, and a feature list.',
-    'Build a /status page showing the last 90 days of uptime per service as a bar strip, with the current incident, if any, called out at the top.',
-    'Add a /changelog page that lists releases newest first, each with a version, a date, and a short summary grouped into added, changed and fixed.',
-    'Add a search box to the docs index that filters the page list as you type. No backend call — filter the list already on the page.',
+    'On /products, group out-of-stock items and sort them by price, cheapest first. Keep in-stock items in the main grid.',
+    'Show the five cheapest Pulse products with unit price next to each name. Link each row to the product on /products.',
+    'Add a price-delta view that compares the last scrape to the current catalog and highlights items that moved more than 10%.',
+    'Expose a JSON products API at /api/products that returns the same catalog Pulse already scrapes, including name, price, and stock.',
   ];
 
   // ══════════════════════════════════════════════════════════════════ state
@@ -1394,7 +1394,7 @@
         '<div>' +
           '<label for="brief-title" class="lbl block mb-2">Title</label>' +
           '<input id="brief-title" type="text" maxlength="120" ' +
-            'placeholder="Add a pricing page" ' +
+            'placeholder="Show the five cheapest products" ' +
             'class="w-full bg-surface border border-line px-4 py-3 text-[16px] text-ink ' +
             'placeholder:text-mute focus:border-info focus:outline-none">' +
           '<p class="mt-1.5 text-[13px] text-mute">Optional. Left blank, the first line of the description is used.</p>' +
