@@ -1,0 +1,16 @@
+# forge-control
+fastapi
+uvicorn[standard]
+httpx
+beautifulsoup4
+pyyaml
+anthropic
+pytest
+
+# telemetry -- if grpcio will not build, switch to the http/protobuf exporter
+# and set OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf. Do not debug it.
+opentelemetry-distro
+opentelemetry-exporter-otlp
+
+# provider abstraction -- only the selected provider needs a key
+openai
