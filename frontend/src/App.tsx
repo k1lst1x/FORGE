@@ -9,7 +9,7 @@ import {
   XCircle,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { PromptInput } from "./components/ui/ai-chat-input";
+import { PromptInput, type PromptInputMeta } from "./components/ui/ai-chat-input";
 
 import Dashboard from "./Dashboard";
 
@@ -70,7 +70,7 @@ const stages = [
   { label: "Approve", icon: UserCheck, value: "Human reviews before release" },
 ];
 
-const API_BASE_URL = import.meta.env.VITE_API_URL ?? "http://localhost:8100";
+const API_BASE_URL = import.meta.env.VITE_API_URL ?? "http://localhost:8000";
 const AUTH_TOKEN_KEY = "forge_access_token";
 const LOGIN_PATH = "/auth/login";
 
@@ -272,7 +272,7 @@ function App() {
     }
   };
 
-  const handlePromptSubmit = useCallback((message: string, meta: { model: string; effort: string; attachments: File[] }) => {
+  const handlePromptSubmit = useCallback(async (message: string, meta: PromptInputMeta) => {
     const nextUserMessage: ChatMessage = {
       id: `user-${Date.now()}`,
       role: "user",
@@ -281,23 +281,40 @@ function App() {
 
     setMessages((current) => [...current, nextUserMessage]);
 
-    const response = `Queued through ${meta.model} at ${meta.effort} effort. ${
-      meta.attachments.length > 0
-        ? `I also received ${meta.attachments.length} attachment(s) for review.`
-        : "No files were attached; I’ll treat this as a text-only brief."
-    }`;
-
-    setTimeout(() => {
+    try {
+      const attachmentNote = meta.attachments.length > 0
+        ? `\n\nAttached files: ${meta.attachments.map((file) => file.name).join(", ")}`
+        : "";
+      const result = await apiFetch<FactoryRunDetail>("/factory/runs", {
+        method: "POST",
+        body: JSON.stringify({
+          brief: `${message}${attachmentNote}`,
+          trigger: `assistant:${meta.model}:${meta.effort}`,
+          auto_start: true,
+        }),
+      });
       setMessages((current) => [
         ...current,
         {
           id: `assistant-${Date.now()}`,
           role: "assistant",
-          content: response,
+          content: `Run ${result.id} created with status ${result.status}.`,
         },
       ]);
-    }, 250);
-  }, []);
+      await refreshRuns();
+      await refreshDetail(result.id);
+      setSelectedRunId(result.id);
+    } catch (err) {
+      setMessages((current) => [
+        ...current,
+        {
+          id: `assistant-${Date.now()}`,
+          role: "assistant",
+          content: err instanceof Error ? `Could not create a run: ${err.message}` : "Could not create a run.",
+        },
+      ]);
+    }
+  }, [refreshDetail, refreshRuns]);
 
   if (!authenticated) {
     return (

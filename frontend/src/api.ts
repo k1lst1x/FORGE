@@ -71,13 +71,16 @@ export interface ObservabilitySnapshot {
   };
 }
 
-const API_BASE_URL = import.meta.env.VITE_API_URL ?? "http://localhost:8100";
+const API_BASE_URL = import.meta.env.VITE_API_URL ?? "http://localhost:8000";
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${API_BASE_URL}${path}`, {
     ...init,
     headers: {
       "Content-Type": "application/json",
+      ...(sessionStorage.getItem("forge_access_token")
+        ? { Authorization: `Bearer ${sessionStorage.getItem("forge_access_token")}` }
+        : {}),
       ...(init?.headers ?? {}),
     },
   });
