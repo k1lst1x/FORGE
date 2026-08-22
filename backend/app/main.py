@@ -6,6 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.factory import router as factory_router
 from app.core.config import settings
+from app.factory.integrations import smoke_checks
 from app.factory.store import init_db
 
 
@@ -37,6 +38,11 @@ def health() -> dict[str, str]:
         "project": settings.project_name,
         "event": settings.event_name,
     }
+
+
+@app.get("/health/integrations", tags=["system"])
+def integrations_health() -> dict[str, object]:
+    return smoke_checks()
 
 
 app.include_router(factory_router)
