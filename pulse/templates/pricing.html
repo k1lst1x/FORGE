@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% block title %}Pulse Pricing{% endblock %}
+{% block description %}Compare Pulse plans for competitor product tracking and price alerts.{% endblock %}
+{% block content %}
+<style>
+  #yearly:checked ~ .plans .monthly-price { display:none; }
+  #monthly:checked ~ .plans .yearly-price { display:none; }
+  .plan { border:1px solid #334155; border-radius:8px; padding:1rem; margin:1rem 0; }
+  .featured { border-color:#93c5fd; }
+  table { border-collapse:collapse; width:100%; }
+  th, td { border-top:1px solid #334155; padding:.6rem; text-align:left; }
+</style>
+<h2>Pricing</h2>
+<p>Choose the plan that fits the number of competitors you track.</p>
+<input type="radio" id="monthly" name="billing" checked>
+<label for="monthly">Monthly</label>
+<input type="radio" id="yearly" name="billing">
+<label for="yearly">Yearly</label>
+<p>Yearly billing includes two months free.</p>
+<section class="plans" aria-label="Pricing plans">
+{% for plan in plans %}
+<article class="plan{% if plan.featured %} featured{% endif %}">
+  <h3>{{ plan.name }}</h3>
+  <p class="monthly-price"><strong>{{ plan.monthly_price }}</strong> per month</p>
+  <p class="yearly-price"><strong>{{ plan.yearly_price }}</strong> per year</p>
+  <ul>
+  {% for feature in plan.features %}
+    <li>{{ feature }}</li>
+  {% endfor %}
+  </ul>
+</article>
+{% endfor %}
+</section>
+<h2>Compare plans</h2>
+<table>
+  <thead>
+    <tr><th scope="col">Feature</th><th scope="col">Starter</th><th scope="col">Growth</th><th scope="col">Scale</th></tr>
+  </thead>
+  <tbody>
+  {% for row in comparison %}
+    <tr><th scope="row">{{ row[0] }}</th><td>{{ row[1] }}</td><td>{{ row[2] }}</td><td>{{ row[3] }}</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endblock %}
