@@ -14,7 +14,9 @@ also what fills SigNoz with real history all day without anyone doing anything.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
+import os
 import time
 
 import httpx
@@ -25,6 +27,32 @@ from forge.models import GRADE_VALUE, SILVER
 log = logging.getLogger("forge.scheduler")
 
 _STATE = {"running": False, "last_run": None, "runs": 0, "failures": 0, "last_error": None}
+
+#: A finding that was already attempted is not retried until this expires.
+#: Without it an escalated finding stays open, is picked up on the next tick,
+#: and pays for another patch-generation call every five minutes forever. On a
+#: $5 budget that is the difference between a day of demos and an afternoon.
+COOLDOWN_SECONDS = float(os.getenv("FORGE_FIX_COOLDOWN_SECONDS", "1800"))
+_ATTEMPTS_FILE = config.STATE_DIR / "fix_attempts.json"
+
+
+def _attempts() -> dict:
+    try:
+        return json.loads(_ATTEMPTS_FILE.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+
+def _remember_attempt(finding_id: str) -> None:
+    data = _attempts()
+    data[finding_id] = time.time()
+    config.STATE_DIR.mkdir(parents=True, exist_ok=True)
+    _ATTEMPTS_FILE.write_text(json.dumps(data, indent=2), encoding="utf-8")
+
+
+def _in_cooldown(finding_id: str) -> bool:
+    last = _attempts().get(finding_id)
+    return bool(last and (time.time() - last) < COOLDOWN_SECONDS)
 
 
 def state() -> dict:
@@ -76,13 +104,21 @@ async def _open_fix_runs(result, dropped: list[str]) -> None:
     slow to watch. The scheduler checks grades itself and calls the SAME
     endpoint the alert calls. Documented, not hidden.
     """
-    worst = sorted(
+    candidates = sorted(
         [f for f in result.findings_high if f.get("route") in dropped],
         key=lambda f: f.get("route") or "",
     )
-    if not worst:
+    fresh = [f for f in candidates if not _in_cooldown(f.get("finding_id", ""))]
+    if not fresh:
+        if candidates:
+            log.info("%s HIGH finding(s) open, all within the retry cooldown", len(candidates))
         return
-    finding = worst[0]
+
+    # One fix run per tick, on purpose. Each costs a model call and a human has
+    # to approve the result anyway -- opening six at once spends money faster
+    # than anyone can review it.
+    finding = fresh[0]
+    _remember_attempt(finding.get("finding_id", ""))
     log.warning("route %s dropped below Silver -- opening a fix run for %s",
                 finding.get("route"), finding.get("check_id"))
     try:

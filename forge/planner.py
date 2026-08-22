@@ -270,7 +270,7 @@ def _strip_fences(text: str) -> str:
     return text[start : end + 1] if start != -1 and end > start else text
 
 
-def _accept(data: dict, usage: dict, attempt: int) -> ChangeSet:
+def _accept(data: dict, usage: dict, attempt: int, file_contents=None) -> ChangeSet:
     """Turn the model's answer into a ChangeSet, enforcing what must be true.
 
     Two rails:
@@ -303,6 +303,24 @@ def _accept(data: dict, usage: dict, attempt: int) -> ChangeSet:
             f"is permitted to write. Refused: {rejected}"
         )
 
+    # A whole-file rewrite that deletes most of the file is not a minimal
+    # change -- it is the model reconstructing a file it only half looked at.
+    # This actually happened: a patch for the /docs guard came back as a
+    # one-line main.py and wiped every route in the app.
+    originals = file_contents if isinstance(file_contents, dict) else {}
+    for entry in accepted:
+        before = (originals.get(entry["path"]) or "").strip()
+        if not before:
+            continue
+        before_lines = len(before.splitlines())
+        after_lines = len((entry["content"] or "").splitlines())
+        if before_lines >= 10 and after_lines < before_lines * 0.5:
+            raise PlannerUnavailable(
+                f"The patch for {entry['path']} shrinks it from {before_lines} lines to "
+                f"{after_lines}, which would delete most of the file rather than change one "
+                "thing. Refusing: a minimal fix does not remove code it was not asked about."
+            )
+
     test_included = any(f["path"].startswith("tests/") for f in accepted)
     if not test_included:
         log.warning("planner returned no test file -- the change is incomplete and VERIFY will see that")
@@ -319,7 +337,7 @@ def _accept(data: dict, usage: dict, attempt: int) -> ChangeSet:
     )
 
 
-def _generate(user: str, attempt: int, client=None) -> ChangeSet:
+def _generate(user: str, attempt: int, client=None, file_contents=None) -> ChangeSet:
     """The one call path. plan_fix and plan_feature differ only in `user`.
 
     If the model forgets the test file, it gets exactly one re-ask that names
@@ -327,7 +345,7 @@ def _generate(user: str, attempt: int, client=None) -> ChangeSet:
     the retry budget here would hide the failure from VERIFY.
     """
     data, usage = _call_model(user, attempt, client=client)
-    changeset = _accept(data, usage, attempt)
+    changeset = _accept(data, usage, attempt, file_contents)
     if changeset.test_included:
         return changeset
 
@@ -338,7 +356,7 @@ def _generate(user: str, attempt: int, client=None) -> ChangeSet:
     )
     log.info("re-asking the planner for the missing test file")
     data, retry_usage = _call_model(reask, attempt, client=client)
-    second = _accept(data, retry_usage, attempt)
+    second = _accept(data, retry_usage, attempt, file_contents)
     second.tokens_in += usage["tokens_in"]
     second.tokens_out += usage["tokens_out"]
     return second
@@ -377,7 +395,7 @@ can review. Return the full content of every file you change, plus a test that f
 before your change and passes after it.{_retry_context(previous)}
 
 Return JSON only."""
-    return _generate(user, attempt, client=client)
+    return _generate(user, attempt, client=client, file_contents=file_contents)
 
 
 # --------------------------------------------------------------------------
@@ -416,4 +434,4 @@ MUST already satisfy them. Concretely, and at minimum:
 Write the route file, the template, and the test.{_retry_context(previous)}
 
 Return JSON only."""
-    return _generate(user, attempt, client=client)
+    return _generate(user, attempt, client=client, file_contents=routes)
