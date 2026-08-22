@@ -1,11 +1,15 @@
 <!doctype html>
 <html lang="en">
-<head><title>Pulse</title></head>
+<head>
+  <title>{% block title %}Pulse{% endblock %}</title>
+  <meta name="description" content="{% block description %}Pulse tracks competitor product pricing and availability.{% endblock %}">
+</head>
 <body style="background:#0f172a;color:#f8fafc;font-family:system-ui;padding:2rem">
 <h1>Pulse</h1>
 <nav><a href="/" style="color:#93c5fd">Home</a> ·
      <a href="/products" style="color:#93c5fd">Products</a> ·
+     <a href="/pricing" style="color:#93c5fd">Pricing</a> ·
      <a href="/security" style="color:#93c5fd">Security</a></nav>
 {% block content %}{% endblock %}
-<img src="/static/logo.png">
+<img src="/static/logo.png" alt="Pulse logo">
 </body></html>
