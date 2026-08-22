@@ -148,11 +148,52 @@ def _console_file(relative: str) -> Response:
     )
 
 
+#: index.html is the landing page; dashboard.html is the operator console.
+LANDING_PAGE = "index.html"
+CONSOLE_PAGE = "dashboard.html"
+
+#: Files the landing page and console load. Each gets its OWN route at the
+#: repo root. Deliberately NOT app.mount("/", StaticFiles(...)): a mount at
+#: root matches before every API route, and one added earlier today made
+#: /health, /api/runs and every other endpoint return 404 with no error
+#: anywhere. An explicit list cannot shadow an endpoint.
+ROOT_ASSETS = (
+    "app.js", "auth.js", "chat-input.js", "config.js", "demo-data.js",
+    "landing.js", "dashboard.html", "index.html",
+)
+
+
+@router.get("/")
+def landing() -> Response:
+    """The landing page, at the address a browser goes to by default."""
+    return _console_file(LANDING_PAGE)
+
+
 @router.get("/console")
 def console_index() -> Response:
-    return _console_file("index.html")
+    return _console_file(CONSOLE_PAGE)
 
 
 @router.get("/console/{path:path}")
 def console_asset(path: str) -> Response:
-    return _console_file(path or "index.html")
+    return _console_file(path or CONSOLE_PAGE)
+
+
+def _register_root_assets() -> None:
+    """Serve each console asset from the root too.
+
+    A page served at /console has a base URL of /, so its relative script tags
+    resolve to /app.js rather than /console/app.js. Registering both keeps the
+    console working at either address without editing its markup.
+    """
+    for name in ROOT_ASSETS:
+        router.add_api_route(
+            "/" + name,
+            (lambda filename: (lambda: _console_file(filename)))(name),
+            methods=["GET"],
+            name="asset_" + name.replace(".", "_"),
+            include_in_schema=False,
+        )
+
+
+_register_root_assets()
