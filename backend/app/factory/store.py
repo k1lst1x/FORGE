@@ -58,6 +58,7 @@ def init_db() -> None:
                 trace_id TEXT,
                 outcome TEXT,
                 classification TEXT,
+                verify TEXT NOT NULL DEFAULT '[]',
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
@@ -109,6 +110,7 @@ def init_db() -> None:
             """
         )
         _ensure_column(db, "factory_runs", "classification", "TEXT")
+        _ensure_column(db, "factory_runs", "verify", "TEXT NOT NULL DEFAULT '[]'")
         db.execute(
             """
             INSERT OR IGNORE INTO outage_state (id, active) VALUES (1, 0)
@@ -170,16 +172,22 @@ def get_run_detail(run_id: str) -> FactoryRunDetail:
 
 
 def update_run(run_id: str, **fields: Any) -> FactoryRun:
-    allowed = {"status", "next_gate", "branch", "pr_url", "trace_id", "outcome", "classification"}
-    updates = {key: value for key, value in fields.items() if key in allowed}
+    allowed = {"status", "next_gate", "branch", "pr_url", "trace_id", "outcome", "classification", "verify"}
+    updates: dict[str, Any] = {}
+    for key, value in fields.items():
+        if key not in allowed:
+            continue
+        if key == "verify" and value is not None:
+            updates[key] = json.dumps(value)
+        elif hasattr(value, "value"):
+            updates[key] = value.value
+        else:
+            updates[key] = value
     if not updates:
         return get_run(run_id)
 
     assignments = ", ".join(f"{key} = ?" for key in updates)
-    values = [
-        value.value if hasattr(value, "value") else value
-        for value in updates.values()
-    ]
+    values = list(updates.values())
 
     with connection() as db:
         db.execute(
@@ -389,6 +397,14 @@ def delete_runs_by_trigger(trigger: str) -> int:
 
 
 def _run_from_row(row: sqlite3.Row) -> FactoryRun:
+    verify_raw = row["verify"] if "verify" in row.keys() else "[]"
+    try:
+        verify_payload = json.loads(verify_raw or "[]")
+    except (TypeError, ValueError):
+        verify_payload = []
+    if not isinstance(verify_payload, list):
+        verify_payload = []
+
     return FactoryRun(
         id=row["id"],
         intake=IntakeType(row["intake"]),
@@ -402,6 +418,7 @@ def _run_from_row(row: sqlite3.Row) -> FactoryRun:
         trace_id=row["trace_id"],
         outcome=row["outcome"],
         classification=_classification_from_row(row),
+        verify=verify_payload,
         created_at=row["created_at"],
         updated_at=row["updated_at"],
     )

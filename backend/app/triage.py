@@ -126,6 +126,16 @@ lots of failed checks. The only way to tell them apart is whether the page retur
 content at all. If real content came back, the app is up and the finding is about the app; \
 do not classify it as an outage.
 
+DATA FINDINGS (D1 stale feed, D2 contract failure) HAVE THEIR OWN RULE. \
+
+A stale or empty scrape caused by an unreachable or erroring SOURCE SITE is \
+UPSTREAM_OUTAGE -- should_act false. Do not patch application code because a \
+third-party site is down; there is nothing in our repository to fix, and a patch \
+written against someone else's outage is worse than no patch. Only classify a \
+data finding AUTOFIX_SAFE if the evidence shows OUR OWN pipeline is at fault -- \
+the scheduler not running the scrape, a collector whose selectors no longer match \
+the page, a contract that no longer describes the feed we ask for.
+
 WHAT HAPPENS TO YOUR DECISION -- this changes the risk calculus, so weigh it.
 
 You are not deploying anything. A patch you mark AUTOFIX_SAFE is written, its tests are \

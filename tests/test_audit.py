@@ -49,13 +49,19 @@ def _resp(headers=None, body="<html><head><title>T</title></head><body></body></
 
 
 # ---------------------------------------------------------------- policy ----
-def test_policy_has_all_seventeen_checks():
-    assert len(POLICY["checks"]) == 17
+def test_policy_has_every_check():
+    """17 security/quality/performance checks, plus the two data checks that
+    grade the scraped feed in the same pass."""
     ids = {c["id"] for c in POLICY["checks"]}
-    assert ids == {f"S{n}" for n in range(1, 13)} | {"Q1", "Q2", "Q3", "Q4", "P1"}
+    assert ids == (
+        {f"S{n}" for n in range(1, 13)}
+        | {"Q1", "Q2", "Q3", "Q4", "P1"}
+        | {"D1", "D2"}
+    )
+    assert len(POLICY["checks"]) == 19
     for check in POLICY["checks"]:
         assert check["severity"] in ("HIGH", "MED", "LOW")
-        assert check["category"] in ("security", "quality", "performance")
+        assert check["category"] in ("security", "quality", "performance", "data")
         assert check["fix_hint"].strip(), f"{check['id']} needs a fix hint"
 
 
@@ -165,7 +171,11 @@ def test_an_unreachable_target_reports_unreachable_rather_than_crashing():
     result = audit.run_audit("http://127.0.0.1:9", ["/"])
     assert result.reachable is False
     assert result.findings, "a dead target still produces findings, naively"
-    assert all(f["reachable"] is False for f in result.findings)
+    # D1/D2 grade the scraped data FILE, not the HTTP target, so they carry no
+    # reachability verdict. Only the findings derived from the fetch do.
+    http_findings = [f for f in result.findings if f.get("category") != "data"]
+    assert http_findings, "the header checks still fire against a dead target"
+    assert all(f["reachable"] is False for f in http_findings)
     assert result.pages == {"/": ""}
 
 

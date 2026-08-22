@@ -60,6 +60,13 @@ FORGE_CONTROL_PORT = _int("FORGE_CONTROL_PORT", 8000)
 FORGE_CONTROL_URL = os.getenv("FORGE_CONTROL_URL", f"http://localhost:{FORGE_CONTROL_PORT}")
 
 AUDIT_INTERVAL_SECONDS = _int("AUDIT_INTERVAL_SECONDS", 300)
+
+#: The scrape runs on its OWN clock, deliberately slower than the audit. Bright
+#: Data falls back to a batch job on this target and a batch run takes minutes,
+#: so starting one every audit tick queued work faster than it could finish. The
+#: two are decoupled: the audit reads whatever is in data/books.json regardless
+#: of when it was written, so a slow scrape delays nothing.
+SCRAPE_INTERVAL_SECONDS = _int("SCRAPE_INTERVAL_SECONDS", 900)
 AUDIT_ROUTES = [r.strip() for r in os.getenv("AUDIT_ROUTES", "/,/products,/security").split(",") if r.strip()]
 MAX_PLAN_ATTEMPTS = _int("FORGE_MAX_PLAN_ATTEMPTS", 3)
 FORGE_RUN_TIMEOUT_SECONDS = float(os.getenv("FORGE_RUN_TIMEOUT_SECONDS", "900"))
@@ -82,7 +89,12 @@ SIGNOZ_REGION = os.getenv("SIGNOZ_REGION", "us")
 def missing() -> dict[str, bool]:
     """What is genuinely not configured. Used by /api/status and at startup."""
     return {
-        "llm": not (os.getenv("ANTHROPIC_API_KEY") or os.getenv("OPENAI_API_KEY")),
+        "llm": not (
+            os.getenv("ANTHROPIC_API_KEY")
+            or os.getenv("FORGE_ANTHROPIC_API_KEY")
+            or os.getenv("OPENAI_API_KEY")
+            or os.getenv("FORGE_OPENAI_API_KEY")
+        ),
         "github": not GITHUB_TOKEN,
         "port": not (PORT_CLIENT_ID and PORT_CLIENT_SECRET),
         "brightdata": not BRIGHTDATA_API_TOKEN,

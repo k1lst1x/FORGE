@@ -42,6 +42,43 @@ button {
   padding: 24px;
 }
 
+.auth-nav,
+.topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: min(1200px, calc(100% - 32px));
+  margin: 0 auto;
+}
+
+.auth-nav {
+  position: absolute;
+  top: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 8px 12px;
+  border: 1px solid rgba(148, 163, 184, 0.4);
+  border-radius: 999px;
+  background: rgba(15, 23, 42, 0.74);
+  backdrop-filter: blur(10px);
+}
+
+.auth-nav a,
+.topbar-links a {
+  color: #e2e8f0;
+  text-decoration: none;
+  font-size: 0.79rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.auth-nav a + a,
+.topbar-links a + a {
+  margin-left: 14px;
+}
+
 .auth-card {
   width: min(100%, 430px);
   padding: 36px;
@@ -96,6 +133,25 @@ button {
   display: flex;
   align-items: center;
   gap: 8px;
+}
+
+.topbar {
+  padding-top: 20px;
+  margin-bottom: 8px;
+}
+
+.topbar-links {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+}
+
+.topbar-links a {
+  color: #334155;
+  text-decoration: none;
+  font-size: 0.72rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
 }
 
 .intro {

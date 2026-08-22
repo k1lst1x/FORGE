@@ -7,7 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.api.factory import router as factory_router
 from app.api.auth import router as auth_router
 from app.core.config import settings
-from app.factory import portal
+from app.factory import portal, vcs
 from app.factory.integrations import smoke_checks
 from app.factory.store import init_db
 
@@ -15,6 +15,7 @@ from app.factory.store import init_db
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     init_db()
+    vcs.ensure_gh_available()
     yield
 
 

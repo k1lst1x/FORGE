@@ -27,29 +27,64 @@ templates = Jinja2Templates(directory=str(Path(__file__).resolve().parent / "tem
 app.include_router(security.router)
 
 
+def _feed() -> dict:
+    """The product feed as the scheduler last wrote it.
+
+    Rendering must never trigger a scrape: a page load would shell out to the
+    Bright Data CLI and a browser refresh would queue another. The scheduler
+    writes data/books.json; this only reads it.
+
+    Returns a dict with `rows`, `age_seconds` and `source`. age_seconds is
+    MEASURED from last_success_at and is None when no scrape has ever
+    succeeded -- the template renders "no data yet" for that rather than
+    substituting a number. Nothing here may invent a timestamp.
+    """
+    from forge import store
+
+    watcher = brightdata.watcher()
+    data = store.read_scrape(watcher)
+    if not data:
+        return {"rows": [], "age_seconds": None, "source": watcher.get("target_url"),
+                "has_data": False, "last_success_at": None}
+    return {
+        "rows": data.get("rows") or [],
+        "age_seconds": store.scrape_age_seconds(watcher),
+        "source": data.get("source") or watcher.get("target_url"),
+        "has_data": True,
+        "last_success_at": data.get("last_success_at"),
+        "contract_ok": data.get("contract_ok", True),
+    }
+
+
 def _products() -> list[dict]:
-    return brightdata.scraper_run()
+    return _feed()["rows"]
 
 
 @app.get("/", response_class=HTMLResponse)
 def home(request: Request):
-    rows = _products()
+    feed = _feed()
+    rows = feed["rows"]
     return templates.TemplateResponse(
         request, "home.html",
         {"count": len(rows),
-         "out_of_stock": len([r for r in rows if r.get("availability") == "out_of_stock"]),
-         "freshness": brightdata.freshness()},
+         "out_of_stock": len([r for r in rows
+                              if "out" in str(r.get("availability", "")).lower()]),
+         "feed": feed},
     )
 
 
 @app.get("/products", response_class=HTMLResponse)
 def products(request: Request):
-    rows = sorted(_products(), key=lambda r: r.get("price") or 0, reverse=True)
+    feed = _feed()
+    rows = sorted(feed["rows"], key=lambda r: r.get("price") or 0, reverse=True)
     return templates.TemplateResponse(
-        request, "products.html", {"rows": rows, "freshness": brightdata.freshness()},
+        request, "products.html", {"rows": rows, "feed": feed},
     )
 
 
 @app.get("/api/products")
 def api_products():
-    return {"products": _products(), "freshness": brightdata.freshness()}
+    feed = _feed()
+    return {"products": feed["rows"], "age_seconds": feed["age_seconds"],
+            "source": feed["source"], "last_success_at": feed["last_success_at"],
+            "has_data": feed["has_data"]}

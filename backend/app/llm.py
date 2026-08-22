@@ -120,10 +120,38 @@ class LLMResult:
 # --------------------------------------------------------------------------
 # configuration
 # --------------------------------------------------------------------------
+def _api_key_names(which: str) -> tuple[str, ...]:
+    return {
+        ANTHROPIC: ("ANTHROPIC_API_KEY", "FORGE_ANTHROPIC_API_KEY"),
+        OPENAI: ("OPENAI_API_KEY", "FORGE_OPENAI_API_KEY"),
+    }[which]
+
+
+def _api_key_for(which: str) -> str:
+    for key in _api_key_names(which):
+        value = os.getenv(key)
+        if value and value.strip():
+            return value.strip()
+    return ""
+
+
 def provider() -> str:
     chosen = (os.getenv("FORGE_LLM_PROVIDER") or ANTHROPIC).strip().lower()
     if chosen not in (ANTHROPIC, OPENAI):
         raise ValueError(f"FORGE_LLM_PROVIDER must be 'anthropic' or 'openai', got {chosen!r}")
+
+    if credentials_available(chosen):
+        return chosen
+
+    fallback = OPENAI if chosen == ANTHROPIC else ANTHROPIC
+    if credentials_available(fallback):
+        log.warning(
+            "Preferred provider %s has no configured API key; falling back to %s.",
+            chosen,
+            fallback,
+        )
+        return fallback
+
     return chosen
 
 
@@ -137,7 +165,8 @@ def model_for(role: str, override_env: str | None = None) -> str:
 
 
 def credentials_available(which: str | None = None) -> bool:
-    return bool(os.getenv(ENV_KEY[which or provider()]))
+    which = which or provider()
+    return bool(_api_key_for(which))
 
 
 def require_credentials(which: str | None = None) -> None:
@@ -148,9 +177,10 @@ def require_credentials(which: str | None = None) -> None:
     """
     which = which or provider()
     if not credentials_available(which):
+        key_names = " / ".join(_api_key_names(which))
         raise RuntimeError(
             f"No {ENV_KEY[which]} is configured, and FORGE_LLM_PROVIDER is {which!r}. "
-            f"Export {ENV_KEY[which]}, or switch provider with FORGE_LLM_PROVIDER."
+            f"Export {key_names}, or switch provider with FORGE_LLM_PROVIDER."
         )
 
 
@@ -387,26 +417,16 @@ def _headroom(max_tokens: int, model: str, which: str) -> int:
     return wanted
 
 
-def generate(
+def _generate_for_provider(
+    which: str,
     system: str,
     user: str,
     max_tokens: int,
     model: str,
-    json_mode: bool = False,
-    *,
-    json_schema: dict | None = None,
+    json_mode: bool,
+    json_schema: dict | None,
     client=None,
 ) -> LLMResult:
-    """One call to whichever provider is configured.
-
-    json_schema is an extension beyond json_mode: on Anthropic it becomes a
-    real schema constraint, which is what keeps triage's classification inside
-    its enum and the planner's changeset in shape. OpenAI gets json_object
-    mode, and the callers' own validation covers the rest.
-    """
-    which = provider()
-    _check_budget()
-
     backend = _anthropic_call if which == ANTHROPIC else _openai_call
     budgeted = _headroom(max_tokens, model, which)
 
@@ -429,6 +449,74 @@ def generate(
             result.reasoning_tokens,
         )
     return result
+
+
+def _fallback_error(exc: Exception) -> bool:
+    message = str(exc).lower()
+    markers = (
+        "credit balance",
+        "insufficient credits",
+        "billing",
+        "quota",
+        "over quota",
+        "rate limit",
+        "429",
+        "payment required",
+        "invalid api key",
+        "unauthorized",
+        "forbidden",
+        "not authorized",
+        "api error",
+        "bad request",
+    )
+    return any(marker in message for marker in markers)
+
+
+def generate(
+    system: str,
+    user: str,
+    max_tokens: int,
+    model: str,
+    json_mode: bool = False,
+    *,
+    json_schema: dict | None = None,
+    client=None,
+) -> LLMResult:
+    """One call to whichever provider is configured.
+
+    json_schema is an extension beyond json_mode: on Anthropic it becomes a
+    real schema constraint, which is what keeps triage's classification inside
+    its enum and the planner's changeset in shape. OpenAI gets json_object
+    mode, and the callers' own validation covers the rest.
+    """
+    if client is not None:
+        return _generate_for_provider(provider(), system, user, max_tokens, model, json_mode, json_schema, client)
+
+    preferred = provider()
+    candidates = [preferred]
+    fallback = OPENAI if preferred == ANTHROPIC else ANTHROPIC
+    if credentials_available(fallback):
+        candidates.append(fallback)
+
+    last_error: Exception | None = None
+    for which in candidates:
+        try:
+            _check_budget()
+            return _generate_for_provider(which, system, user, max_tokens, model, json_mode, json_schema, None)
+        except Exception as exc:  # pragma: no cover - exercised by runtime fallback, not small unit tests
+            last_error = exc
+            if which == candidates[-1] or not _fallback_error(exc):
+                raise
+            log.warning(
+                "LLM provider %s failed (%s); retrying with %s instead.",
+                which,
+                exc,
+                fallback,
+            )
+
+    if last_error is not None:
+        raise last_error
+    raise RuntimeError("No available LLM provider could satisfy the request.")
 
 
 def annotate_span(span, result: LLMResult) -> None:

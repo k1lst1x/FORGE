@@ -19,11 +19,28 @@ that trades a MED for a HIGH is not a fix.
 
 HOW THE "AFTER" STATE IS MEASURED
 --------------------------------------------------------------------------
-The candidate is served on a scratch port from the branch working tree and
-audited there -- the live app is never restarted against unverified code. If a
-patch is bad enough that the app will not boot, the candidate fails to start and
-that IS the verification result, with the traceback as evidence. Breaking the
-app is caught before the pull request exists, not after the merge.
+The candidate is served on a scratch port FROM THE FACTORY WORKTREE -- the tree
+vcs.write_files just wrote the patch into -- and audited there. The live app is
+never restarted against unverified code. If a patch is bad enough that the app
+will not boot, the candidate fails to start and that IS the verification result,
+with the traceback as evidence. Breaking the app is caught before the pull
+request exists, not after the merge.
+
+Both checks run with the worktree as their working directory, and that is load
+bearing rather than tidy: the changeset only exists there. Run pytest from the
+main checkout and it is handed a path to a test file that was never written to
+that tree, so every attempt fails "file not found" no matter what the patch
+says. Serve the app from the main checkout and the audit measures the UNPATCHED
+app, so the finding is always still present and every attempt is rejected. Both
+look exactly like a bad patch in the evidence.
+
+A FAMILY IS CLOSED TOGETHER OR NOT AT ALL
+--------------------------------------------------------------------------
+When the finding belongs to a family in policy/audit_policy.yaml -- S1-S6 all
+share one security-headers middleware -- every open sibling on that route has to
+be gone from the fresh audit, not just the finding that opened the run. A patch
+that closes S1 and leaves S2-S6 is not most of a fix; it is a change that leaves
+the route exactly as unshippable as it was.
 
 FAILING SAFE WHEN THERE IS NO BASELINE
 --------------------------------------------------------------------------
@@ -61,6 +78,30 @@ PULSE_APP = os.getenv("PULSE_APP", "pulse.main:app")
 ROUTE_DECORATOR = re.compile(r"@(?:app|router)\.(?:get|post|put|delete)\(\s*[\"']([^\"']+)[\"']")
 
 
+def candidate_cwd() -> str:
+    """Where the patched code actually lives: the factory worktree.
+
+    vcs.write_files writes ONLY into the worktree, so a check that runs anywhere
+    else is not checking the patch. Falls back to the process directory when
+    there is no worktree -- with a loud warning, because in that state the
+    "after" measurement is of the unpatched tree and every verdict it produces
+    is meaningless.
+    """
+    try:
+        from app import vcs
+
+        if vcs.WORKTREE.exists():
+            return str(vcs.WORKTREE)
+        log.warning(
+            "no factory worktree at %s -- verifying the process directory instead, which does "
+            "NOT contain the patch. Any verdict from this run is about the unpatched tree.",
+            vcs.WORKTREE,
+        )
+    except Exception as exc:  # vcs is Damir's; a wobble there must not kill VERIFY
+        log.warning("could not locate the factory worktree: %s", exc)
+    return os.getcwd()
+
+
 # --------------------------------------------------------------------------
 # check one: the tests
 # --------------------------------------------------------------------------
@@ -87,11 +128,12 @@ def run_tests(changeset, cwd: str | None = None) -> tuple[bool, str]:
         )
 
     command = [sys.executable, "-m", "pytest", *paths, "-q", "--no-header", "-p", "no:cacheprovider"]
-    log.info("verify: running %s", " ".join(command))
+    working = cwd or candidate_cwd()
+    log.info("verify: running %s (in %s)", " ".join(command), working)
     try:
         completed = subprocess.run(
             command,
-            cwd=cwd or os.getcwd(),
+            cwd=working,
             capture_output=True,
             text=True,
             timeout=PYTEST_TIMEOUT,
@@ -134,7 +176,7 @@ def _wait_until_serving(port: int, process, timeout: float) -> bool:
 
 
 @contextmanager
-def serve_candidate(port: int | None = None):
+def serve_candidate(port: int | None = None, cwd: str | None = None):
     """Serve the branch working tree on a scratch port. Yields (base_url, error).
 
     The live app is never restarted against unverified code. If the candidate
@@ -143,13 +185,15 @@ def serve_candidate(port: int | None = None):
     None, which is itself the verification result.
     """
     port = port or _free_port()
+    working = cwd or candidate_cwd()
     command = [sys.executable, "-m", "uvicorn", PULSE_APP, "--host", "127.0.0.1", "--port", str(port), "--log-level", "warning"]
+    log.info("verify: serving the candidate from %s on port %s", working, port)
     process = None
     try:
         try:
             process = subprocess.Popen(
                 command,
-                cwd=os.getcwd(),
+                cwd=working,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 text=True,
@@ -195,6 +239,13 @@ def routes_under_test(changeset, cr) -> list[str]:
     for change in changeset:
         if change.get("path", "").startswith("pulse/"):
             routes.extend(ROUTE_DECORATOR.findall(change.get("content") or ""))
+
+    # A guard the factory just wrote for /.env or /admin is a route in the
+    # source, but it is not a PAGE. Auditing it as one produces six header
+    # findings against a path whose whole job is to refuse -- and those persist
+    # into the catalog as graded pages. Drop them.
+    blocked = set(_exposure_paths())
+    routes = [r for r in routes if r not in blocked]
     # "/" carries the app-level checks: exposed paths, stack traces, docs.
     if "/" not in routes:
         routes.append("/")
@@ -206,13 +257,24 @@ def routes_under_test(changeset, cr) -> list[str]:
     return ordered
 
 
+def _exposure_paths() -> set:
+    """Paths the policy probes for exposure. Never pages in their own right."""
+    try:
+        from app import audit
+
+        return set(audit.load_policy().get("exposure_paths") or [])
+    except Exception:
+        return {"/.env", "/.git/config", "/admin", "/debug", "/docs"}
+
+
 def new_routes(changeset) -> list[str]:
     """Routes this changeset introduces -- a feature run must land these clean."""
     found: list[str] = []
     for change in changeset:
         if change.get("path", "").startswith("pulse/"):
             found.extend(ROUTE_DECORATOR.findall(change.get("content") or ""))
-    return found
+    blocked = _exposure_paths()
+    return [r for r in found if r not in blocked]
 
 
 # --------------------------------------------------------------------------
@@ -230,14 +292,27 @@ def _describe(finding: dict) -> str:
     return f"{finding.get('check_id')} on {finding.get('route')} ({finding.get('severity')})"
 
 
-def compare(cr, before, after, changeset) -> tuple[list, list, bool, list[str]]:
+def family_findings(cr) -> list[dict]:
+    """The open siblings this run also has to close, put there by CONTEXT.
+
+    Empty for a finding that stands alone, which is most of them.
+    """
+    if cr is None:
+        return []
+    context = getattr(cr, "context", None) or {}
+    return [f for f in (context.get("family_findings") or []) if isinstance(f, dict)]
+
+
+def compare(cr, before, after, changeset) -> tuple[list, list, bool, list[str], list[dict], str]:
     """Decide whether the candidate is better than what it replaces.
 
-    Returns (findings_closed, findings_introduced, ok, evidence lines).
-    findings_introduced holds the HIGH findings that were not there before --
-    the blocking set. Anything new at MED or LOW is reported but does not block.
+    Returns (findings_closed, findings_introduced, ok, evidence lines,
+    findings_still_open, rejected_reason). findings_introduced holds the HIGH
+    findings that were not there before -- the blocking set. Anything new at MED
+    or LOW is reported but does not block.
     """
     notes: list[str] = []
+    reasons: list[str] = []
     baseline = bool(before is not None and getattr(before, "reachable", False))
     after_findings = list(getattr(after, "findings", []) or [])
     before_findings = list(getattr(before, "findings", []) or []) if baseline else []
@@ -260,32 +335,68 @@ def compare(cr, before, after, changeset) -> tuple[list, list, bool, list[str]]:
         )
 
     ok = True
+    still_open: list[dict] = []
 
     if cr is not None and getattr(cr, "finding", None):
         target = cr.finding.get("finding_id")
-        still_open = target in after_ids
-        if still_open:
+        if target in after_ids:
             ok = False
+            still_open.append(cr.finding)
             notes.append(
                 f"The finding this run exists to close, {_describe(cr.finding)}, is STILL PRESENT "
                 "after the patch. The change did not do what it was for."
             )
+            reasons.append(f"{_describe(cr.finding)} is still present after the patch")
         else:
             if target and target not in _ids(closed):
                 closed = closed + [cr.finding]
             notes.append(f"The target finding {_describe(cr.finding)} is gone from the fresh audit.")
+
+        # A family is closed together or not at all. Closing S1 while S2-S6 stay
+        # open is not most of a fix -- the route is exactly as unshippable as it
+        # was, and the next attempt would be handed the same five findings.
+        siblings = [f for f in family_findings(cr) if f.get("finding_id") != target]
+        if siblings:
+            family = cr.finding.get("family") or "family"
+            open_now = [f for f in siblings if f.get("finding_id") in after_ids]
+            gone = [f for f in siblings if f.get("finding_id") not in after_ids]
+            closed = closed + [f for f in gone if f.get("finding_id") not in _ids(closed)]
+            if open_now:
+                ok = False
+                still_open.extend(open_now)
+                notes.append(
+                    f"The `{family}` family was not closed in one change. Still open after the "
+                    "patch: " + "; ".join(_describe(f) for f in open_now)
+                    + ". These share a single fix, so a patch that closes some of them leaves the "
+                    "route in the same state and the next audit reports the rest."
+                )
+                reasons.append(
+                    f"{len(open_now)} of {len(siblings) + 1} `{family}` findings on "
+                    f"{cr.finding.get('route')} are still open"
+                )
+            else:
+                notes.append(
+                    f"All {len(siblings) + 1} open `{family}` findings on "
+                    f"{cr.finding.get('route')} are gone from the fresh audit."
+                )
     else:
         # A feature run: the routes it created must be clean on their own terms.
         created = new_routes(changeset)
         dirty = [f for f in _high(after_findings) if f.get("route") in created]
         if dirty:
             ok = False
+            still_open.extend(dirty)
             notes.append(
                 "The generated route(s) "
                 + ", ".join(sorted(set(created)))
                 + " came back with HIGH findings: "
                 + "; ".join(_describe(f) for f in dirty)
                 + ". The audit policy was the acceptance criteria for this code."
+            )
+            reasons.append(
+                "the generated route(s) came back with "
+                + str(len(dirty))
+                + " HIGH finding(s)"
             )
         elif created:
             notes.append(f"Generated route(s) {', '.join(sorted(set(created)))} have no HIGH findings.")
@@ -300,6 +411,9 @@ def compare(cr, before, after, changeset) -> tuple[list, list, bool, list[str]]:
                 + "; ".join(_describe(f) for f in introduced)
                 + ". A patch that closes one hole and opens another is not a fix."
             )
+            reasons.append(
+                "it introduces " + str(len(introduced)) + " HIGH finding(s) that were not there before"
+            )
         else:
             # Say what was actually measured. With no baseline we cannot claim
             # these are new, only that they are present, and the evidence a
@@ -311,12 +425,15 @@ def compare(cr, before, after, changeset) -> tuple[list, list, bool, list[str]]:
                 + "; ".join(_describe(f) for f in introduced)
                 + ". With no baseline these cannot be attributed to this change, only observed."
             )
+            reasons.append(
+                "the candidate still serves " + str(len(introduced)) + " HIGH finding(s)"
+            )
     if minor:
         notes.append(
             "Also new, not blocking: " + "; ".join(_describe(f) for f in minor)
         )
 
-    return closed, introduced, ok, notes
+    return closed, introduced, ok, notes, still_open, "; ".join(reasons)
 
 
 # --------------------------------------------------------------------------
@@ -343,6 +460,7 @@ def verify(changeset, cr) -> VerifyResult:
 
     changeset = list(changeset or [])
     routes = routes_under_test(changeset, cr)
+    attempt = int(getattr(cr, "attempts", 0) or 0) + 1
 
     # ---- check one: does it work ----
     tests_passed, test_output = run_tests(changeset)
@@ -350,6 +468,9 @@ def verify(changeset, cr) -> VerifyResult:
         return VerifyResult(
             ok=False,
             tests_passed=False,
+            attempt=attempt,
+            tests_output=test_output,
+            rejected_reason="the tests that accompany this change did not pass",
             evidence="TESTS FAILED -- not auditing a change that does not pass its own tests.\n\n" + test_output,
         )
 
@@ -371,7 +492,11 @@ def verify(changeset, cr) -> VerifyResult:
         return VerifyResult(
             ok=False,
             tests_passed=True,
+            attempt=attempt,
+            tests_output=test_output,
             audit_before=before.as_dict() if before is not None else {},
+            rejected_reason="the patched candidate could not be audited: "
+            + (startup_error or "unknown startup failure")[:200],
             evidence=(
                 "TESTS PASSED, BUT THE CANDIDATE COULD NOT BE AUDITED.\n\n"
                 + (startup_error or "unknown startup failure")
@@ -379,7 +504,7 @@ def verify(changeset, cr) -> VerifyResult:
             ),
         )
 
-    closed, introduced, ok, notes = compare(cr, before, after, changeset)
+    closed, introduced, ok, notes, still_open, rejected_reason = compare(cr, before, after, changeset)
 
     evidence = [
         "TESTS PASSED.",
@@ -399,17 +524,27 @@ def verify(changeset, cr) -> VerifyResult:
     result = VerifyResult(
         ok=ok,
         tests_passed=True,
+        attempt=attempt,
+        tests_output=test_output,
         audit_before=before.as_dict() if before is not None else {},
         audit_after=after.as_dict(),
         findings_closed=[f.get("finding_id") for f in closed],
         findings_introduced=[f.get("finding_id") for f in introduced],
+        findings_still_open=[
+            {"finding_id": f.get("finding_id"), "check_id": f.get("check_id"),
+             "route": f.get("route"), "severity": f.get("severity")}
+            for f in still_open
+        ],
+        rejected_reason="" if ok else (rejected_reason or "the fresh audit did not come back clean"),
         evidence="\n".join(evidence).strip(),
     )
     log.info(
-        "verify %s: ok=%s closed=%s introduced=%s",
+        "verify %s attempt %s: ok=%s closed=%s introduced=%s still_open=%s",
         getattr(cr, "run_id", "?"),
+        attempt,
         result.ok,
         len(result.findings_closed),
         len(result.findings_introduced),
+        len(result.findings_still_open),
     )
     return result

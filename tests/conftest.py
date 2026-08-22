@@ -45,8 +45,36 @@ def hermetic_environment(monkeypatch, tmp_path):
         except Exception:
             pass
 
+    # Serving the app starts the scheduler, whose first tick now shells out to
+    # the Bright Data CLI for up to 120s. A TestClient must never do that -- the
+    # scrape has its own tests with the subprocess faked.
+    monkeypatch.setattr(
+        "forge.scheduler.scrape_once",
+        lambda: {"ok": False, "rows": 0, "reason": "disabled in tests", "wrote": False},
+        raising=False,
+    )
+
     from forge import llm
 
     llm.reset_budget()
     yield
     llm.reset_budget()
+
+
+@pytest.fixture(scope="session", autouse=True)
+def never_scrape_in_tests():
+    """Disable the scheduler's scrape for the whole session.
+
+    Session-scoped on purpose: module-scoped fixtures (test_console_wiring
+    builds its TestClient in one) run BEFORE function-scoped ones, so a
+    function-scoped patch arrives too late and the app's lifespan starts a
+    real 120s Bright Data subprocess.
+    """
+    from forge import scheduler
+
+    original = scheduler.scrape_once
+    scheduler.scrape_once = lambda: {
+        "ok": False, "rows": 0, "reason": "disabled in tests", "wrote": False,
+    }
+    yield
+    scheduler.scrape_once = original

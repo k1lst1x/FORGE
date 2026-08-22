@@ -33,6 +33,8 @@ class Settings(BaseSettings):
     signoz_ingestion_key: str = Field(default="", validation_alias=AliasChoices("SIGNOZ_INGESTION_KEY", "FORGE_SIGNOZ_INGESTION_KEY"))
     signoz_ingest_base_url: str = Field(default="", validation_alias=AliasChoices("SIGNOZ_INGEST_BASE_URL", "FORGE_SIGNOZ_INGEST_BASE_URL"))
 
+    anthropic_api_key: str = Field(default="", validation_alias=AliasChoices("ANTHROPIC_API_KEY", "FORGE_ANTHROPIC_API_KEY"))
+    llm_provider: str = Field(default="anthropic", validation_alias=AliasChoices("FORGE_LLM_PROVIDER", "LLM_PROVIDER"))
     openai_api_key: str = Field(default="", validation_alias=AliasChoices("OPENAI_API_KEY", "FORGE_OPENAI_API_KEY"))
     openai_api_base_url: str = Field(default="https://api.openai.com/v1", validation_alias=AliasChoices("OPENAI_API_BASE_URL", "FORGE_OPENAI_API_BASE_URL"))
 

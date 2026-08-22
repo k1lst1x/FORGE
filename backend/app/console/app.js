@@ -403,6 +403,7 @@
       S.countdown = s.next_audit_seconds;
       S.loaded.status = true;
       S.online = true;
+      applyDerived();               // status has no severity data of its own
       renderStatusBar();
       renderRail();
     }).catch(function (err) {
@@ -438,6 +439,19 @@
     }).catch(function () { markOnline(false); });
   }
 
+  /** Fold the findings-derived numbers into whatever status object exists. */
+  function applyDerived() {
+    if (!S.status || !S.derived) return;
+    S.status.HIGH = S.derived.HIGH;
+    S.status.MED = S.derived.MED;
+    S.status.LOW = S.derived.LOW;
+    S.status.grades = S.derived.grades;
+    S.status.audited_at = S.derived.audited_at;
+    S.status.runs_today = (S.runs || []).length;
+    S.sigs.bar = null;
+    renderStatusBar();
+  }
+
   function applyRun(run) {
     var prevId = S.run && S.run.run_id;
     S.run = run;
@@ -464,9 +478,20 @@
       // /api/findings also carries when the audit last ran and the totals, so
       // the status bar can show a real "last audit" age. /api/status has no
       // timing field -- adapting rather than inventing one.
-      if (payload && payload.audited_at != null && S.status) {
-        S.status.audited_at = payload.audited_at * 1000;
-      }
+      // /api/status carries spend and provider only -- no severity counts and
+      // no grades. They come from /api/findings, and are kept on S.derived
+      // because pollStatus reassigns S.status wholesale on every poll.
+      var totals = (payload && payload.totals) || {};
+      var grades = {};
+      ((payload && payload.routes) || []).forEach(function (r) { grades[r.route] = r.grade; });
+      S.derived = {
+        HIGH: totals.HIGH || 0,
+        MED: totals.MED || 0,
+        LOW: totals.LOW || 0,
+        grades: grades,
+        audited_at: payload && payload.audited_at != null ? payload.audited_at * 1000 : null,
+      };
+      applyDerived();
       markOnline(true);
       pollCatalog();
       if (S.screen === 'findings') renderScreen();
@@ -526,12 +551,12 @@
       return normCatalog({
         route: route,
         grade: grade,
-        open_findings_high: b.HIGH,
-        open_findings_med: b.MED,
-        open_findings_low: b.LOW,
+        high: b.HIGH,
+        med: b.MED,
+        low: b.LOW,
         open_findings: b.open,
         suppressed: b.suppressed,
-        last_audited: S.status && S.status.audited_at ? S.status.audited_at : null,
+        last_audit: S.status && S.status.audited_at ? S.status.audited_at : null,
       });
     });
   }
