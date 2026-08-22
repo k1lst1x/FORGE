@@ -1,0 +1,1 @@
+app = FastAPI(docs_url=None)

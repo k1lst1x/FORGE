@@ -1,0 +1,160 @@
+<!doctype html>
+<html lang="en" class="h-full">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=1400">
+<title>FORGE — console</title>
+
+<script src="https://cdn.tailwindcss.com"></script>
+<script>
+  tailwind.config = {
+    theme: {
+      extend: {
+        colors: {
+          bg:      '#0A0F1A',
+          surface: '#111827',
+          raise:   '#161F2E',
+          line:    '#1F2937',
+          ink:     '#F8FAFC',
+          dim:     '#94A3B8',
+          ok:      '#10B981',
+          warn:    '#F59E0B',
+          bad:     '#EF4444',
+          info:    '#3B82F6',
+          mute:    '#64748B',
+          brand:   '#FB923C',
+        },
+        fontFamily: {
+          sans: ['ui-sans-serif', 'system-ui', 'Segoe UI', 'Inter', 'Helvetica Neue', 'Arial', 'sans-serif'],
+          mono: ['ui-monospace', 'SFMono-Regular', 'Menlo', 'Consolas', 'Liberation Mono', 'monospace'],
+        },
+      },
+    },
+  };
+</script>
+
+<!-- Supabase Auth. UMD build so the console stays buildless and still opens from file://. -->
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+
+<style>
+  html, body { background: #0A0F1A; }
+  body { -webkit-font-smoothing: antialiased; }
+
+  /* Data labels: 13px, uppercase, tracked. One class, used everywhere. */
+  .lbl {
+    font-size: 13px; line-height: 1.2; text-transform: uppercase;
+    letter-spacing: 0.09em; color: #94A3B8;
+  }
+
+  /* --- motion. Only two things move, and both of them mean something. ----- */
+
+  /* The stage the run is in right now. */
+  @keyframes forge-ring {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(59,130,246,0.55); }
+    50%      { box-shadow: 0 0 0 7px rgba(59,130,246,0); }
+  }
+  .stage-active { animation: forge-ring 1.8s cubic-bezier(0.4,0,0.6,1) infinite; }
+
+  @keyframes forge-dot {
+    0%, 100% { opacity: 1; }
+    50%      { opacity: 0.35; }
+  }
+  .dot-live { animation: forge-dot 1.8s ease-in-out infinite; }
+
+  /* First load only. Never on a poll. */
+  @keyframes forge-shimmer {
+    0%   { background-position: 200% 0; }
+    100% { background-position: -200% 0; }
+  }
+  .sk {
+    background-image: linear-gradient(90deg, #111827 0%, #1B2536 50%, #111827 100%);
+    background-size: 200% 100%;
+    animation: forge-shimmer 1.5s linear infinite;
+    border-radius: 2px;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .stage-active, .dot-live, .sk { animation: none; }
+  }
+
+  /* --- instrument-panel frame: hairline rules with corner ticks ----------- */
+  .frame { position: relative; }
+  .frame::before, .frame::after {
+    content: ''; position: absolute; width: 9px; height: 9px; pointer-events: none;
+    border-color: #1F2937; border-style: solid; border-width: 0;
+  }
+  .frame::before { top: -1px; left: -1px;  border-top-width: 1px; border-left-width: 1px; }
+  .frame::after  { top: -1px; right: -1px; border-top-width: 1px; border-right-width: 1px; }
+
+  /* --- scrollbars, dark and thin ----------------------------------------- */
+  * { scrollbar-width: thin; scrollbar-color: #1F2937 transparent; }
+  ::-webkit-scrollbar { width: 9px; height: 9px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: #1F2937; border-radius: 0; }
+  ::-webkit-scrollbar-thumb:hover { background: #2C3B52; }
+
+  /* --- brief composer (ported from the ai-chat-input reference) ----------- */
+  .spring { transition: height .4s cubic-bezier(.175,.885,.32,1.275), border-color .2s ease; }
+  .spring-fast { transition: height .15s ease-out, border-color .2s ease; }
+  .morph { transition: opacity .3s cubic-bezier(.175,.885,.32,1.275), transform .3s cubic-bezier(.175,.885,.32,1.275); }
+  .bar-lvl { transition: opacity .3s ease; }
+  textarea::placeholder { color: #64748B; }
+
+  a, button { outline-color: #3B82F6; }
+  [hidden] { display: none !important; }
+</style>
+</head>
+
+<body class="h-full bg-bg text-ink font-sans text-[16px]">
+
+<!-- ══════════════════════════════════════════════════ auth gate (optional) -->
+<div id="auth-screen" hidden class="fixed inset-0 z-50 bg-bg flex items-center justify-center p-8"></div>
+
+<!-- ══════════════════════════════════════════════════════════════ console -->
+<div id="app" hidden>
+
+  <!-- Left rail ─────────────────────────────────────────────── 200px fixed -->
+  <aside class="fixed inset-y-0 left-0 z-30 w-[200px] border-r border-line bg-bg flex flex-col">
+
+    <div class="px-5 pt-6 pb-7">
+      <a href="#live" class="flex items-center gap-2.5 group">
+        <svg width="18" height="18" viewBox="0 0 18 18" fill="none" aria-hidden="true">
+          <path d="M2 16V2h14L9.5 8.5H6v3h5L9 16H2z" fill="#FB923C"/>
+        </svg>
+        <span class="text-[17px] font-bold tracking-[0.18em] text-ink">FORGE</span>
+      </a>
+      <div class="lbl mt-2 text-[11px] tracking-[0.14em] text-mute">Agentic software factory</div>
+    </div>
+
+    <nav id="nav" class="flex-1 px-3 space-y-0.5" aria-label="Console sections"></nav>
+
+    <!-- scheduler health -->
+    <div class="border-t border-line px-5 py-4">
+      <div id="rail-health" class="flex items-center gap-2">
+        <span class="inline-block w-2 h-2 rounded-full bg-mute" data-health-dot></span>
+        <span class="lbl text-[11px]" data-health-text>connecting</span>
+      </div>
+      <div class="mt-2 text-[13px] text-dim">
+        next audit in
+        <span class="font-mono text-ink" data-tick="countdown">--:--</span>
+      </div>
+      <div id="rail-user" class="mt-3 hidden"></div>
+    </div>
+  </aside>
+
+  <!-- Main ──────────────────────────────────────────────────────────────── -->
+  <main class="ml-[200px] min-h-screen">
+    <div class="mx-auto max-w-[1400px] p-8">
+      <div id="statusbar" class="frame"></div>
+      <div id="screen" class="mt-8"></div>
+    </div>
+  </main>
+</div>
+
+<script src="config.js"></script>
+<script src="demo-data.js"></script>
+<script src="chat-input.js"></script>
+<script src="auth.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
