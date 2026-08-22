@@ -1,7 +1,13 @@
 from fastapi import APIRouter, HTTPException
 
 from app.factory import engine, scheduler, store
-from app.factory.models import FactoryRun, FactoryRunCreate, FactoryRunDetail, Finding
+from app.factory.models import (
+    FactoryRun,
+    FactoryRunCreate,
+    FactoryRunDetail,
+    FactoryRunStatus,
+    Finding,
+)
 
 router = APIRouter(prefix="/factory", tags=["factory"])
 
@@ -32,6 +38,38 @@ def get_run(run_id: str) -> FactoryRunDetail:
 @router.get("/findings", response_model=list[Finding])
 def list_findings() -> list[Finding]:
     return store.list_findings()
+
+
+@router.post("/runs/{run_id}/approve", response_model=FactoryRunDetail)
+def approve_run(run_id: str) -> FactoryRunDetail:
+    try:
+        store.get_run(run_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Factory run not found") from exc
+
+    store.update_run(
+        run_id,
+        status=FactoryRunStatus.released,
+        next_gate="Approved by human operator; release may proceed.",
+        outcome="approved_by_human",
+    )
+    return store.get_run_detail(run_id)
+
+
+@router.post("/runs/{run_id}/reject", response_model=FactoryRunDetail)
+def reject_run(run_id: str) -> FactoryRunDetail:
+    try:
+        store.get_run(run_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Factory run not found") from exc
+
+    store.update_run(
+        run_id,
+        status=FactoryRunStatus.escalated,
+        next_gate="Rejected by human operator; escalation required.",
+        outcome="rejected_by_human",
+    )
+    return store.get_run_detail(run_id)
 
 
 @router.post("/audit/start")
