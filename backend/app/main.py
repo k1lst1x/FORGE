@@ -6,6 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.factory import router as factory_router
 from app.core.config import settings
+from app.factory import portal
 from app.factory.integrations import smoke_checks
 from app.factory.store import init_db
 
@@ -14,6 +15,7 @@ from app.factory.store import init_db
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     init_db()
     yield
+
 
 app = FastAPI(
     title=settings.project_name,
@@ -32,11 +34,12 @@ app.add_middleware(
 
 
 @app.get("/health", tags=["system"])
-def health() -> dict[str, str]:
+def health() -> dict[str, object]:
     return {
         "status": "ok",
         "project": settings.project_name,
         "event": settings.event_name,
+        "port": portal.port_health(),
     }
 
 
