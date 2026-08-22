@@ -1,5 +1,7 @@
+import time
 from uuid import uuid4
 
+from app.core.config import settings
 from app.factory import brightdata, portal, store, telemetry, vcs
 from app.factory.models import (
     ChangeRequest,
@@ -11,6 +13,25 @@ from app.factory.models import (
 )
 
 STAGES = ("intake", "context", "triage", "plan", "act", "verify", "gate", "release")
+
+
+def _deadline_seconds() -> float:
+    return float(getattr(settings, "run_timeout_seconds", 900))
+
+
+def _append_verify_entry(run_id: str, *, attempt: int, tests_passed: bool, tests_output: str | None, findings_closed: int, findings_introduced: int, rejected_reason: str | None) -> None:
+    current = list(store.get_run(run_id).verify)
+    current.append(
+        {
+            "attempt": attempt,
+            "tests_passed": tests_passed,
+            "tests_output": tests_output,
+            "findings_closed": findings_closed,
+            "findings_introduced": findings_introduced,
+            "rejected_reason": rejected_reason,
+        }
+    )
+    store.update_run(run_id, verify=current)
 
 
 def create_planned_run(*, brief: str, trigger: str = "manual") -> str:
@@ -43,8 +64,7 @@ def run_from_brief(*, brief: str, trigger: str = "manual") -> ChangeRequest:
         trace_id=telemetry.new_trace_id(),
     )
     store.update_run(run_id, trace_id=cr.trace_id)
-    execute(cr)
-    return cr
+    return execute(cr)
 
 
 def run_from_finding(*, finding: dict, trigger: str = "signoz") -> ChangeRequest:
@@ -65,22 +85,48 @@ def run_from_finding(*, finding: dict, trigger: str = "signoz") -> ChangeRequest
         trace_id=telemetry.new_trace_id(),
     )
     store.update_run(run_id, trace_id=cr.trace_id)
-    execute(cr)
-    return cr
+    return execute(cr)
 
 
 def execute(cr: ChangeRequest) -> ChangeRequest:
-    for stage in STAGES:
-        _run_stage(cr, stage)
-        if not cr.should_act:
-            store.update_run(
-                cr.run_id,
-                status=FactoryRunStatus.escalated,
-                outcome=cr.justification,
-                next_gate="Human review required before any code is written.",
-            )
-            break
-    return cr
+    started = time.monotonic()
+    deadline = started + _deadline_seconds()
+    try:
+        for stage in STAGES:
+            if time.monotonic() >= deadline:
+                raise TimeoutError(f"run exceeded wall-clock timeout of {_deadline_seconds()}s")
+            _run_stage(cr, stage)
+            if not cr.should_act:
+                store.update_run(
+                    cr.run_id,
+                    status=FactoryRunStatus.escalated,
+                    outcome=cr.justification,
+                    next_gate="Human review required before any code is written.",
+                )
+                break
+        return cr
+    except Exception as exc:
+        cr.outcome = "error"
+        cr.status = FactoryRunStatus.failed
+        cr.should_act = False
+        store.update_run(
+            cr.run_id,
+            status=FactoryRunStatus.failed,
+            outcome=str(exc),
+            next_gate=f"Run failed: {exc}",
+        )
+        _append_verify_entry(
+            cr.run_id,
+            attempt=max(1, int(getattr(cr, "attempts", 0)) + 1),
+            tests_passed=False,
+            tests_output=str(exc),
+            findings_closed=0,
+            findings_introduced=0,
+            rejected_reason=str(exc),
+        )
+        if getattr(settings, "engine_raises", False):
+            raise
+        return cr
 
 
 def _run_stage(cr: ChangeRequest, stage: str) -> None:
@@ -146,10 +192,22 @@ def _handle_stage(cr: ChangeRequest, stage: str) -> str:
                 suggested_fix_hint="Add security headers middleware before release.",
             )
             cr.verify = {
-                "tests": "passed",
-                "audit": "finding_recorded",
+                "tests_passed": True,
+                "tests_output": "Stub verification passed.",
+                "findings_closed": 0,
+                "findings_introduced": 1,
+                "rejected_reason": None,
                 "finding_id": finding.id,
             }
+            _append_verify_entry(
+                cr.run_id,
+                attempt=max(1, int(getattr(cr, "attempts", 0)) + 1),
+                tests_passed=True,
+                tests_output=cr.verify["tests_output"],
+                findings_closed=cr.verify["findings_closed"],
+                findings_introduced=cr.verify["findings_introduced"],
+                rejected_reason=cr.verify["rejected_reason"],
+            )
             telemetry.counter("factory_findings_detected", run_id=cr.run_id, severity="HIGH")
             return "Tests passed and a realistic audit finding was recorded."
         case "gate":

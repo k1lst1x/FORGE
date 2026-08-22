@@ -43,6 +43,15 @@ class TriageClassification(StrEnum):
     duplicate = "DUPLICATE"
 
 
+class VerifyAttempt(BaseModel):
+    attempt: int
+    tests_passed: bool = False
+    tests_output: str | None = None
+    findings_closed: int = 0
+    findings_introduced: int = 0
+    rejected_reason: str | None = None
+
+
 class ChangeRequest(BaseModel):
     run_id: str
     intake: IntakeType
@@ -55,6 +64,7 @@ class ChangeRequest(BaseModel):
     justification: str | None = None
     changeset: list[dict[str, Any]] = Field(default_factory=list)
     verify: dict[str, Any] = Field(default_factory=dict)
+    status: FactoryRunStatus | str | None = None
     branch: str | None = None
     pr_url: str | None = None
     attempts: int = 0
@@ -81,6 +91,7 @@ class FactoryRun(BaseModel):
     trace_id: str | None = None
     outcome: str | None = None
     classification: TriageClassification | None = None
+    verify: list[VerifyAttempt] = Field(default_factory=list)
     created_at: str
     updated_at: str
 
