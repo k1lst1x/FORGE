@@ -8,6 +8,8 @@ class Settings(BaseSettings):
     project_name: str = "FORGE"
     event_name: str = "FORGE Zero Downtime Hackathon"
     cors_origins: list[str] = Field(default_factory=lambda: ["http://localhost:5173"])
+    database_path: str = "data/forge.db"
+    audit_interval_seconds: int = 60
 
 
 settings = Settings()

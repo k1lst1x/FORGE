@@ -79,7 +79,12 @@ npm run dev
 ## Initial API Contract
 
 - `GET /health` - service health and project identity.
-- `GET /factory/runs` - placeholder list of factory runs.
-- `POST /factory/runs` - create a placeholder factory run from a brief.
+- `GET /factory/runs` - list persisted factory runs from SQLite.
+- `POST /factory/runs` - create a factory run from a brief and, by default, execute the 8-step stub loop.
+- `GET /factory/runs/{run_id}` - get one run with its steps and findings.
+- `GET /factory/findings` - list audit findings.
+- `POST /factory/audit/start` - start the scheduled audit loop.
+- `POST /factory/audit/stop` - stop the scheduled audit loop.
+- `GET /factory/audit/status` - inspect scheduler state.
 
-These endpoints are deliberately small. They give the frontend something stable to call while the factory loop grows into Port, Bright Data, and SigNoz.
+These endpoints are deliberately small. They give the frontend something stable to call while the factory loop grows into real Port, Bright Data, GitHub, and SigNoz integrations.
