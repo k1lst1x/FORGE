@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Pulse product feed",
+  "description": "What a books scrape must satisfy before it is allowed to reach data/. A result that fails this is rejected and the previous good file is kept.",
+  "type": "array",
+  "items": {
+    "type": "object",
+    "properties": {
+      "title": { "type": "string", "minLength": 1 },
+      "price": { "type": "number", "minimum": 0 },
+      "availability": { "type": "string" }
+    },
+    "required": ["title", "price"],
+    "additionalProperties": true
+  },
+  "min_rows": 10,
+  "max_null_ratio": 0.2
+}

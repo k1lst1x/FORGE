@@ -1,14 +1,20 @@
 {% extends "base.html" %}
 {% block content %}
-<p>{{ rows|length }} products, most expensive first. Scraped {{ freshness.age_seconds }}s ago.</p>
+{% if feed.has_data %}
+<p>{{ rows|length }} products, most expensive first.
+   Last successful scrape {{ feed.age_seconds|int }}s ago from {{ feed.source }}.</p>
 <table style="border-collapse:collapse;width:100%">
 <tr><th align="left">Product</th><th align="left">Price</th><th align="left">Availability</th></tr>
 {% for row in rows %}
 <tr style="border-top:1px solid #334155">
-  <td>{{ row.name }}</td>
-  <td>{{ row.currency }} {{ row.price }}</td>
+  <td>{{ row.title }}</td>
+  <td>{{ row.price }}</td>
   <td>{{ row.availability }}</td>
 </tr>
 {% endfor %}
 </table>
+{% else %}
+<p><strong>No data yet.</strong> No scrape has ever succeeded, so this table is
+empty for a reason we can name rather than one we are guessing at.</p>
+{% endif %}
 {% endblock %}

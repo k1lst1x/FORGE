@@ -1,27 +1,19 @@
 """
 forge/brightdata.py -- the Bright Data CLI, driven as a subprocess.
 
-Terminal only. Every call here shells out to
+Terminal only. Every call shells out to
 
-    npx -p @brightdata/cli bdata scraper run <collector_id> <url>
+    npx -p @brightdata/cli bdata scraper run <collector_id> <url> --pretty
 
-inside a `brightdata.scraper_run` span. Nothing in this repo touches the
-Bright Data dashboard: a pipeline that only works because someone clicked
-something in a browser is not part of the factory.
+inside a `brightdata.scraper_run` span. See CLAUDE.md for the pinned collector
+and the rules.
 
-The collector id is PINNED in CLAUDE.md and watchers/books.yaml. Generating one
-takes 5-10 minutes, so it is never on the demo path.
-
-WRITES ARE VALIDATED AND ATOMIC
+WHAT THIS MODULE REFUSES TO DO
 --------------------------------------------------------------------------
-A scrape that returns nothing, or rows missing the fields watchers/books.yaml
-declares, does NOT overwrite data/books.json. Pulse keeps serving the last good
-rows with an honest age on them, because stale-and-labelled beats empty-and-
-silent. The write is temp-file-then-rename so a reader never sees half a file.
-
-`last_success_at` is set only when validation passes. That is the single source
-of freshness -- the previous implementation reported age from a local HTTP
-cache, which reset to zero on refresh and made the counter run backwards.
+It does not decide what happens to a bad scrape. It raises, and the caller --
+the scheduler -- decides. That keeps "the scrape failed" and "therefore the
+data file is unchanged" in two different places, which is why a failure can
+become an audit finding instead of a silent overwrite.
 """
 from __future__ import annotations
 
@@ -40,22 +32,38 @@ from forge import config
 log = logging.getLogger("forge.brightdata")
 
 STUB = False
-
 REPO = config.REPO_ROOT
 WATCHER_PATH = Path(os.getenv("FORGE_BOOKS_WATCHER", str(REPO / "watchers" / "books.yaml")))
-DATA_PATH = Path(os.getenv("FORGE_BOOKS_DATA", str(REPO / "data" / "books.json")))
-#: Resolved at call time: on Windows npx is npx.cmd, and subprocess cannot
-#: exec the bare name even though shutil.which() finds it.
+
+#: Hard ceiling. The CLI polls a batch job and will happily wait an hour.
+#:
+#: 600s, not 120s. This target exceeds Bright Data's realtime page limit, so the
+#: CLI falls back to a batch job on its own and a batch run takes MINUTES. At
+#: 120s we were killing healthy runs mid-flight and recording them as timeouts,
+#: which then aged the feed past D1 -- a finding our own ceiling created. The
+#: scrape is off the demo path (it runs in its own task, see forge/scheduler.py),
+#: so a long ceiling costs nothing anyone is waiting on.
+HARD_TIMEOUT_SECONDS = int(os.getenv("FORGE_SCRAPE_TIMEOUT", "120"))
+
 NPX = "npx"
 CLI_ARGS = ["-y", "-p", "@brightdata/cli", "bdata"]
 
 
-def _cli() -> list[str]:
-    return [shutil.which(NPX) or NPX] + CLI_ARGS
-
-
 class ScrapeError(RuntimeError):
-    """The scrape did not produce usable rows. Existing data is left alone."""
+    """The scrape did not produce usable rows."""
+
+
+class ScrapeTimeout(ScrapeError):
+    """The CLI exceeded the hard timeout and was killed."""
+
+
+class ContractViolation(ScrapeError):
+    """Rows came back but do not satisfy the contract."""
+
+
+def _cli() -> list[str]:
+    # On Windows npx is npx.cmd: shutil.which finds it, bare exec does not.
+    return [shutil.which(NPX) or NPX] + CLI_ARGS
 
 
 def watcher() -> dict:
@@ -66,108 +74,29 @@ def watcher() -> dict:
         return {}
 
 
+def contract() -> dict:
+    spec = watcher()
+    path = REPO / (spec.get("contract") or "contracts/books.schema.json")
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        log.error("could not read contract %s: %s", path, exc)
+        return {}
+
+
 def collector_id() -> str | None:
-    """The pinned collector. Env wins so a demo machine can override."""
     explicit = os.getenv("BOOKS_COLLECTOR_ID") or os.getenv("BRIGHTDATA_COLLECTOR_ID")
-    if explicit and not explicit.startswith("c_PENDING"):
+    if explicit:
         return explicit
     pinned = (watcher().get("collector_id") or "").strip()
-    return pinned if pinned and not pinned.startswith("c_PENDING") else None
+    return pinned or None
 
 
 def target_url() -> str:
     return watcher().get("target_url") or "https://books.toscrape.com/"
 
 
-# --------------------------------------------------------------------------
-# validation -- rule 3 in CLAUDE.md
-# --------------------------------------------------------------------------
-def _coerce(row: dict, fields: list[dict]) -> dict | None:
-    out = {}
-    for field in fields:
-        name = field["name"]
-        value = row.get(name, field.get("default"))
-        if value in (None, "") and field.get("required"):
-            return None
-        if field.get("type") == "number" and value is not None:
-            try:
-                value = float(str(value).strip().lstrip("£$€"))
-            except (TypeError, ValueError):
-                return None
-        allowed = field.get("one_of")
-        if allowed and value not in allowed:
-            value = field.get("default", "unknown")
-        out[name] = value
-    return out
-
-
-def validate(rows, spec: dict | None = None) -> list[dict]:
-    """Rows that satisfy the watcher contract. Raises rather than writing junk."""
-    spec = spec or watcher()
-    fields = spec.get("fields") or []
-    minimum = int((spec.get("validation") or {}).get("min_rows", 1))
-
-    if not isinstance(rows, list):
-        raise ScrapeError(f"expected a list of rows, got {type(rows).__name__}")
-
-    clean = [c for c in (_coerce(r, fields) for r in rows if isinstance(r, dict)) if c]
-    if len(clean) < minimum:
-        raise ScrapeError(
-            f"only {len(clean)} of {len(rows)} row(s) satisfied the field contract in "
-            f"{WATCHER_PATH.name}; the minimum is {minimum}. Keeping the previous data."
-        )
-    return clean
-
-
-# --------------------------------------------------------------------------
-# the store -- atomic, with the last successful scrape recorded
-# --------------------------------------------------------------------------
-def read_data() -> dict:
-    try:
-        return json.loads(DATA_PATH.read_text(encoding="utf-8"))
-    except Exception:
-        return {"rows": [], "last_success_at": None, "source": None, "collector_id": None}
-
-
-def _write_data(rows: list[dict], source: str, cid: str | None, duration_ms: float) -> dict:
-    payload = {
-        "rows": rows,
-        "row_count": len(rows),
-        "last_success_at": time.time(),
-        "source": source,
-        "collector_id": cid,
-        "duration_ms": duration_ms,
-    }
-    DATA_PATH.parent.mkdir(parents=True, exist_ok=True)
-    tmp = DATA_PATH.with_suffix(".json.tmp")
-    tmp.write_text(json.dumps(payload, indent=2), encoding="utf-8")
-    tmp.replace(DATA_PATH)          # atomic: a reader never sees half a file
-    return payload
-
-
-def freshness() -> dict:
-    """Age of the last SUCCESSFUL scrape. Never derived from a cache timestamp."""
-    data = read_data()
-    at = data.get("last_success_at")
-    spec = watcher().get("validation") or {}
-    max_age = int(spec.get("max_age_seconds", 3600))
-    age = round(time.time() - at) if at else None
-    return {
-        "last_success_at": at,
-        "age_seconds": age,
-        "stale": age is None or age > max_age,
-        "max_age_seconds": max_age,
-        "source": data.get("source"),
-        "collector_id": data.get("collector_id"),
-        "rows": data.get("row_count", len(data.get("rows") or [])),
-    }
-
-
-# --------------------------------------------------------------------------
-# the CLI, as a subprocess
-# --------------------------------------------------------------------------
 def _env() -> dict:
-    """API_TOKEN reaches the CLI through the environment, never the argv line."""
     env = dict(os.environ)
     if config.BRIGHTDATA_API_TOKEN:
         env["API_TOKEN"] = config.BRIGHTDATA_API_TOKEN
@@ -184,11 +113,8 @@ def _parse_rows(stdout: str) -> list:
     except json.JSONDecodeError:
         start = min((i for i in (text.find("["), text.find("{")) if i >= 0), default=-1)
         if start < 0:
-            return []
-        try:
-            payload = json.loads(text[start:])
-        except json.JSONDecodeError:
-            return []
+            raise
+        payload = json.loads(text[start:])
     if isinstance(payload, dict):
         for key in ("data", "rows", "results", "records"):
             if isinstance(payload.get(key), list):
@@ -197,99 +123,183 @@ def _parse_rows(stdout: str) -> list:
     return payload if isinstance(payload, list) else []
 
 
-def scraper_run(collector: str | None = None, url: str | None = None) -> list[dict]:
-    """Run the pinned collector once and write data/books.json if it validates.
+def _normalise(row: dict) -> dict:
+    """Map whatever the collector calls things onto the contract's names."""
+    out = dict(row)
+    if "title" not in out:
+        for alias in ("name", "product", "book_title", "product_name"):
+            if alias in out:
+                out["title"] = out[alias]
+                break
+    price = out.get("price")
+    if isinstance(price, str):
+        try:
+            out["price"] = float(price.strip().lstrip("£$€").replace(",", ""))
+        except ValueError:
+            out["price"] = None
+    if "availability" in out and out["availability"] is not None:
+        out["availability"] = str(out["availability"])
+    return out
 
-    Returns the rows now being served -- the new ones on success, the previous
-    good ones on failure. Never raises at the caller: Pulse must keep rendering.
+
+# --------------------------------------------------------------------------
+# the contract
+# --------------------------------------------------------------------------
+def validate_contract(rows, spec: dict | None = None) -> list[dict]:
+    """Rows that satisfy contracts/books.schema.json, or raise.
+
+    Checks the three things a JSON Schema alone would not: the row count floor,
+    the null ratio across required fields, and that price is genuinely numeric
+    after normalisation.
+    """
+    spec = spec or contract()
+    if not isinstance(rows, list):
+        raise ContractViolation(f"expected a list of rows, got {type(rows).__name__}")
+
+    required = (spec.get("items") or {}).get("required") or ["title", "price"]
+    min_rows = int(spec.get("min_rows", 1))
+    max_null = float(spec.get("max_null_ratio", 1.0))
+
+    normalised = [_normalise(r) for r in rows if isinstance(r, dict)]
+    if len(normalised) < min_rows:
+        raise ContractViolation(
+            f"{len(normalised)} row(s) returned, contract requires at least {min_rows}"
+        )
+
+    total = len(normalised) * len(required)
+    nulls = sum(1 for r in normalised for f in required if r.get(f) in (None, ""))
+    ratio = (nulls / total) if total else 1.0
+    if ratio > max_null:
+        raise ContractViolation(
+            f"{nulls} of {total} required field(s) across {len(normalised)} rows are null "
+            f"({ratio:.0%}), contract allows at most {max_null:.0%}"
+        )
+    return normalised
+
+
+def contract_report(rows) -> dict:
+    """Non-raising form, for the audit's D2 evidence."""
+    try:
+        ok = validate_contract(rows)
+        return {"ok": True, "rows": len(ok), "reason": None}
+    except ContractViolation as exc:
+        return {"ok": False, "rows": len(rows or []), "reason": str(exc)}
+
+
+# --------------------------------------------------------------------------
+# the scrape
+# --------------------------------------------------------------------------
+def scraper_run(collector: str | None = None, url: str | None = None) -> list[dict]:
+    """Run the pinned collector once. Returns raw rows, or RAISES.
+
+    Deliberately does not touch data/. The caller decides what a failure means,
+    which is what lets a bad scrape become an audit finding rather than a silent
+    overwrite.
     """
     from forge import telemetry
 
     cid = collector or collector_id()
     url = url or target_url()
-    spec = watcher()
-    timeout = int((spec.get("run") or {}).get("timeout_seconds", 300))
 
     started = time.perf_counter()
-    exit_code, rows, error = -1, [], None
+    exit_code, rows, failure = -1, [], None
 
     with telemetry.stage_span("brightdata.scraper_run", "scrape") as span:
+        def tag(**kw):
+            if span is None:
+                return
+            for k, v in kw.items():
+                try:
+                    span.set_attribute(k, v)
+                except Exception:
+                    pass
+
+        tag(**{"bd.collector_id": cid or "none", "bd.url": url})
         try:
             if not cid:
-                raise ScrapeError(
-                    "no collector is pinned. Generate one, then set collector_id in "
-                    "watchers/books.yaml and BOOKS_COLLECTOR_ID in CLAUDE.md."
-                )
-            if not shutil.which("npx"):
+                raise ScrapeError("no collector pinned; see CLAUDE.md")
+            if not shutil.which(NPX):
                 raise ScrapeError("npx is not on PATH, so the Bright Data CLI cannot be run")
 
             command = _cli() + ["scraper", "run", cid, url, "--pretty"]
-            if (spec.get("run") or {}).get("mode") == "sync":
-                command.append("--sync")
-            log.info("bdata: %s", " ".join(command[-5:]))
-
-            proc = subprocess.run(command, capture_output=True, text=True,
-                                  timeout=timeout, env=_env(), cwd=str(REPO))
+            log.info("bdata scraper run %s %s (timeout %ss)", cid, url, HARD_TIMEOUT_SECONDS)
+            proc = subprocess.run(
+                command, capture_output=True, text=True,
+                timeout=HARD_TIMEOUT_SECONDS, env=_env(), cwd=str(REPO),
+            )
             exit_code = proc.returncode
-            if exit_code != 0:
-                raise ScrapeError(f"bdata exited {exit_code}: {(proc.stderr or proc.stdout)[-300:]}")
+            stdout, stderr = proc.stdout or "", proc.stderr or ""
 
-            rows = validate(_parse_rows(proc.stdout), spec)
-            duration = round((time.perf_counter() - started) * 1000, 1)
-            _write_data(rows, url, cid, duration)
-            log.info("scraped %s row(s) via %s in %sms", len(rows), cid, duration)
+            if exit_code != 0:
+                blob = (stderr + stdout)[-800:]
+                if "429" in blob or "rate limit" in blob.lower():
+                    raise ScrapeError(
+                        "Bright Data rate limited this run (429). The CLI backs off on its own "
+                        "and the next tick retries. Detail: " + blob[-200:]
+                    )
+                raise ScrapeError("bdata exited " + str(exit_code) + ": " + blob[-300:])
+
+            if not stdout.strip():
+                # Exit 0 with no output is ZERO ROWS, not a crash. The contract
+                # rejects it downstream; it must not masquerade as a parse error.
+                log.warning("bdata exited 0 with empty stdout -- treating as zero rows")
+                rows = []
+            else:
+                try:
+                    rows = _parse_rows(stdout)
+                except json.JSONDecodeError as exc:
+                    tag(**{"bd.stdout_head": stdout[:800]})
+                    raise ScrapeError("could not parse CLI output as JSON: " + str(exc)) from exc
 
         except subprocess.TimeoutExpired:
-            error = f"bdata did not finish within {timeout}s"
+            # subprocess.run has already killed the child; say so explicitly.
+            failure = ScrapeTimeout(
+                "bdata exceeded the " + str(HARD_TIMEOUT_SECONDS) + "s hard timeout and was killed. "
+                "This target runs as a batch job, which can outlast a tick."
+            )
+            tag(**{"bd.timed_out": True})
         except ScrapeError as exc:
-            error = str(exc)
+            failure = exc
         except Exception as exc:
-            error = f"{type(exc).__name__}: {exc}"
+            failure = ScrapeError(type(exc).__name__ + ": " + str(exc))
 
         duration_ms = round((time.perf_counter() - started) * 1000, 1)
-        if span is not None:
-            span.set_attribute("bd.collector_id", cid or "none")
-            span.set_attribute("bd.url", url)
-            span.set_attribute("bd.exit_code", exit_code)
-            span.set_attribute("bd.duration_ms", duration_ms)
-            span.set_attribute("bd.row_count", len(rows))
-            if error:
-                span.set_attribute("bd.error", error[:300])
-                span.add_event("brightdata.scrape_failed", {"error": error[:300]})
-        telemetry.counter("forge_scrape_total", 1, result="ok" if not error else "failed")
-        telemetry.histogram("forge_scrape_duration_ms", duration_ms)
+        tag(**{"bd.exit_code": exit_code, "bd.duration_ms": duration_ms, "bd.row_count": len(rows)})
+        telemetry.histogram("forge_scrape_duration_ms", duration_ms, collector=cid or "none")
+        telemetry.histogram("forge_rows_extracted", len(rows), collector=cid or "none")
 
-    if error:
-        # Keep serving the last good rows rather than blanking the app.
-        previous = read_data().get("rows") or []
-        log.error("scrape failed (%s); serving %s previous row(s)", error, len(previous))
-        return previous
+        if failure is not None:
+            if span is not None:
+                try:
+                    span.record_exception(failure)
+                    span.add_event("brightdata.scrape_failed", {"error": str(failure)[:300]})
+                except Exception:
+                    pass
+            telemetry.counter(
+                "forge_scrape_failures_total", 1,
+                reason="timeout" if isinstance(failure, ScrapeTimeout) else "cli_error",
+            )
+            raise failure
+
     return rows
 
 
 def scraper_heal(collector: str | None, prompt: str, url: str | None = None) -> dict:
     """Regenerate a collector whose selectors stopped matching, and STOP.
 
-    No auto-approve flag on purpose: a human sees the preview before it commits.
+    No --auto-approve, ever: a human sees the preview before it commits.
     """
-    from forge import telemetry
-
     cid = collector or collector_id()
-    with telemetry.stage_span("brightdata.scraper_heal", "heal") as span:
-        try:
-            proc = subprocess.run(_cli() + ["scraper", "heal", cid, prompt], capture_output=True,
-                                  text=True, timeout=900, env=_env(), cwd=str(REPO))
-            ok = proc.returncode == 0
-            if span is not None:
-                span.set_attribute("bd.collector_id", cid or "none")
-                span.set_attribute("bd.exit_code", proc.returncode)
-            return {
-                "status": "awaiting_approval" if ok else "failed",
-                "preview_result": (proc.stdout or proc.stderr or "")[-2000:],
-                "next_step": f"npx -p @brightdata/cli bdata scraper approve {cid}",
-            }
-        except Exception as exc:
-            return {"status": "failed", "preview_result": str(exc), "next_step": ""}
+    try:
+        proc = subprocess.run(_cli() + ["scraper", "heal", cid, prompt], capture_output=True,
+                              text=True, timeout=900, env=_env(), cwd=str(REPO))
+        return {
+            "status": "awaiting_approval" if proc.returncode == 0 else "failed",
+            "preview_result": (proc.stdout or proc.stderr or "")[-2000:],
+            "next_step": "npx -p @brightdata/cli bdata scraper approve " + str(cid),
+        }
+    except Exception as exc:
+        return {"status": "failed", "preview_result": str(exc), "next_step": ""}
 
 
 def scraper_approve(collector_or_cmd: str) -> bool:

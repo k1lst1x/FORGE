@@ -19,11 +19,28 @@ that trades a MED for a HIGH is not a fix.
 
 HOW THE "AFTER" STATE IS MEASURED
 --------------------------------------------------------------------------
-The candidate is served on a scratch port from the branch working tree and
-audited there -- the live app is never restarted against unverified code. If a
-patch is bad enough that the app will not boot, the candidate fails to start and
-that IS the verification result, with the traceback as evidence. Breaking the
-app is caught before the pull request exists, not after the merge.
+The candidate is served on a scratch port FROM THE FACTORY WORKTREE -- the tree
+vcs.write_files just wrote the patch into -- and audited there. The live app is
+never restarted against unverified code. If a patch is bad enough that the app
+will not boot, the candidate fails to start and that IS the verification result,
+with the traceback as evidence. Breaking the app is caught before the pull
+request exists, not after the merge.
+
+Both checks run with the worktree as their working directory, and that is load
+bearing rather than tidy: the changeset only exists there. Run pytest from the
+main checkout and it is handed a path to a test file that was never written to
+that tree, so every attempt fails "file not found" no matter what the patch
+says. Serve the app from the main checkout and the audit measures the UNPATCHED
+app, so the finding is always still present and every attempt is rejected. Both
+look exactly like a bad patch in the evidence.
+
+A FAMILY IS CLOSED TOGETHER OR NOT AT ALL
+--------------------------------------------------------------------------
+When the finding belongs to a family in policy/audit_policy.yaml -- S1-S6 all
+share one security-headers middleware -- every open sibling on that route has to
+be gone from the fresh audit, not just the finding that opened the run. A patch
+that closes S1 and leaves S2-S6 is not most of a fix; it is a change that leaves
+the route exactly as unshippable as it was.
 
 FAILING SAFE WHEN THERE IS NO BASELINE
 --------------------------------------------------------------------------
@@ -61,6 +78,30 @@ PULSE_APP = os.getenv("PULSE_APP", "pulse.main:app")
 ROUTE_DECORATOR = re.compile(r"@(?:app|router)\.(?:get|post|put|delete)\(\s*[\"']([^\"']+)[\"']")
 
 
+def candidate_cwd() -> str:
+    """Where the patched code actually lives: the factory worktree.
+
+    vcs.write_files writes ONLY into the worktree, so a check that runs anywhere
+    else is not checking the patch. Falls back to the process directory when
+    there is no worktree -- with a loud warning, because in that state the
+    "after" measurement is of the unpatched tree and every verdict it produces
+    is meaningless.
+    """
+    try:
+        from forge import vcs
+
+        if vcs.WORKTREE.exists():
+            return str(vcs.WORKTREE)
+        log.warning(
+            "no factory worktree at %s -- verifying the process directory instead, which does "
+            "NOT contain the patch. Any verdict from this run is about the unpatched tree.",
+            vcs.WORKTREE,
+        )
+    except Exception as exc:  # vcs is Damir's; a wobble there must not kill VERIFY
+        log.warning("could not locate the factory worktree: %s", exc)
+    return os.getcwd()
+
+
 # --------------------------------------------------------------------------
 # check one: the tests
 # --------------------------------------------------------------------------
@@ -87,11 +128,12 @@ def run_tests(changeset, cwd: str | None = None) -> tuple[bool, str]:
         )
 
     command = [sys.executable, "-m", "pytest", *paths, "-q", "--no-header", "-p", "no:cacheprovider"]
-    log.info("verify: running %s", " ".join(command))
+    working = cwd or candidate_cwd()
+    log.info("verify: running %s (in %s)", " ".join(command), working)
     try:
         completed = subprocess.run(
             command,
-            cwd=cwd or os.getcwd(),
+            cwd=working,
             capture_output=True,
             text=True,
             timeout=PYTEST_TIMEOUT,
@@ -134,7 +176,7 @@ def _wait_until_serving(port: int, process, timeout: float) -> bool:
 
 
 @contextmanager
-def serve_candidate(port: int | None = None):
+def serve_candidate(port: int | None = None, cwd: str | None = None):
     """Serve the branch working tree on a scratch port. Yields (base_url, error).
 
     The live app is never restarted against unverified code. If the candidate
@@ -143,13 +185,15 @@ def serve_candidate(port: int | None = None):
     None, which is itself the verification result.
     """
     port = port or _free_port()
+    working = cwd or candidate_cwd()
     command = [sys.executable, "-m", "uvicorn", PULSE_APP, "--host", "127.0.0.1", "--port", str(port), "--log-level", "warning"]
+    log.info("verify: serving the candidate from %s on port %s", working, port)
     process = None
     try:
         try:
             process = subprocess.Popen(
                 command,
-                cwd=os.getcwd(),
+                cwd=working,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 text=True,

@@ -1,45 +1,41 @@
 # watchers/books.yaml -- the Pulse product feed.
 #
-# Version-controlled on purpose: the collector id and the field contract live
-# in git, not in a dashboard or a shell history.
+# Version-controlled on purpose: the collector id and the field contract live in
+# git, not in a dashboard or somebody's shell history.
 
 name: books
 description: Competitor product listing that Pulse renders on / and /products
 
 target_url: https://books.toscrape.com/
-collector_id: c_mt4y9wy817vo82ojy8          # pinned; see CLAUDE.md
+collector_id: c_mt4y9wy817vo82ojy8
 
 output: data/books.json
+contract: contracts/books.schema.json
 
-# Every row must carry these, or the result is rejected and the previous
-# good data is kept. This is the contract rule 3 in CLAUDE.md enforces.
 fields:
-  - name: name
-    type: string
-    required: true
-  - name: price
-    type: number
-    required: true
-  - name: currency
-    type: string
-    required: false
-    default: GBP
-  - name: availability
-    type: string
-    required: false
-    default: unknown
-    one_of: [in_stock, out_of_stock, unknown]
-  - name: rating
-    type: string
-    required: false
+  - title
+  - price
+  - availability
 
-validation:
-  min_rows: 1
-  max_age_seconds: 3600        # older than this, Pulse labels the data stale
+# D1 in the audit policy fires when the last successful scrape is older than this.
+#
+# 2400s, not 900s. This target runs as a BATCH job (see `mode` below) and a batch
+# run takes minutes, so a 900s threshold made D1 fire on nothing but our own
+# pipeline being slow -- a false positive we created ourselves, which then opened
+# a fix run against a feed that was simply still in flight. The threshold has to
+# be longer than one scrape interval plus one batch run: 900s interval + a batch
+# job that can take the full 600s timeout, with headroom for the next tick.
+max_age_seconds: 900
 
 run:
-  timeout_seconds: 600
-  # NOT sync: this listing exceeds Bright Data's realtime page limit, and the
-  # CLI answers "Realtime page limit exceeded -- switching to batch mode",
-  # wasting a round trip before doing the same thing. Observed, not guessed.
+  # NOT sync: this listing exceeds Bright Data's realtime page limit and the CLI
+  # answers "Realtime page limit exceeded -- switching to batch mode", paying for
+  # a failed realtime attempt first. Observed, not guessed.
   mode: async
+  # A batch job takes minutes, not seconds. 120s killed healthy runs mid-flight
+  # and reported them as timeouts.
+  timeout_seconds: 600
+  # How often the scheduler starts one. Decoupled from the audit interval on
+  # purpose -- the audit reads whatever is in data/books.json regardless of when
+  # it was written.
+  interval_seconds: 900

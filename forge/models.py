@@ -108,6 +108,13 @@ class ChangeRequest:
     finished_at: float | None = None
     approval_id: str | None = None
     approved: bool | None = None
+    #: ONE ENTRY PER VERIFY ATTEMPT, appended and never overwritten.
+    #: `verify` above holds only the LAST result, which is why a run that was
+    #: rejected three times used to reach a human with no record of what the
+    #: three rejections said -- an hour of reading logs to learn something the
+    #: run already knew. This is what summary() publishes as "verify", and
+    #: therefore what GET /api/runs/{id} serves.
+    verify_attempts: list = field(default_factory=list)
 
     # ---------------- convenience ----------------
     @property
@@ -151,6 +158,8 @@ class ChangeRequest:
             "branch": self.branch,
             "pr_url": self.pr_url,
             "approved": self.approved,
+            # The whole verification history, not just the last attempt.
+            "verify": list(self.verify_attempts),
             "outcome": self.outcome,
             "trace_id": self.trace_id,
             "duration_ms": self.duration_ms,
@@ -211,8 +220,34 @@ class VerifyResult:
     findings_introduced: list = field(default_factory=list)
     evidence: str = ""
 
+    # ---- added after the freeze, all defaulted ----
+    #: Raw pytest output. `evidence` is written for a human reading a pull
+    #: request; this is what the planner is shown verbatim on a retry.
+    tests_output: str = ""
+    #: One sentence naming why this attempt was rejected, so the run record and
+    #: the console do not make anyone read the whole evidence blob to find out.
+    rejected_reason: str = ""
+    #: Findings this run was supposed to close that the fresh audit still saw.
+    #: The target finding, plus every open sibling in its family.
+    findings_still_open: list = field(default_factory=list)
+    #: Which attempt produced this result. 1-based, matching cr.attempts + 1.
+    attempt: int = 1
+
     def as_dict(self) -> dict:
         return asdict(self)
+
+    def record(self) -> dict:
+        """The compact per-attempt row that lands on the run and in the API."""
+        return {
+            "attempt": self.attempt,
+            "ok": self.ok,
+            "tests_passed": self.tests_passed,
+            "tests_output": self.tests_output,
+            "findings_closed": list(self.findings_closed),
+            "findings_introduced": list(self.findings_introduced),
+            "findings_still_open": list(self.findings_still_open),
+            "rejected_reason": self.rejected_reason,
+        }
 
 
 @dataclass

@@ -74,8 +74,34 @@ def load_policy(path: str | None = None) -> dict:
             location = beside
     raw = yaml.safe_load(location.read_text(encoding="utf-8"))
     raw["by_id"] = {c["id"]: c for c in raw.get("checks", [])}
+
+    # Families: checks that share ONE fix and have to be closed together. S1-S6
+    # are six findings and one middleware; planning them one at a time can never
+    # come back clean because the re-audit still sees the other five.
+    families: dict[str, list[str]] = {}
+    for check in raw.get("checks", []):
+        name = check.get("family")
+        if name:
+            families.setdefault(name, []).append(check["id"])
+    raw["families"] = families
+    raw["family_by_id"] = {cid: name for name, ids in families.items() for cid in ids}
+
     _POLICY_CACHE[path] = raw
     return raw
+
+
+def family_of(check_id: str, policy: dict | None = None) -> str | None:
+    """The family a check belongs to, or None when it stands alone."""
+    policy = policy if isinstance(policy, dict) and policy.get("family_by_id") else load_policy()
+    return (policy.get("family_by_id") or {}).get(check_id)
+
+
+def family_members(family: str, policy: dict | None = None) -> list[str]:
+    """Every check id in a family, in policy order."""
+    if not family:
+        return []
+    policy = policy if isinstance(policy, dict) and policy.get("families") else load_policy()
+    return list((policy.get("families") or {}).get(family) or [])
 
 
 def _threshold(policy: dict, name: str, default):
@@ -98,6 +124,9 @@ def _finding(policy: dict, check_id: str, route: str, evidence: str, reachable: 
     return {
         "finding_id": _finding_id(check_id, route),
         "check_id": check_id,
+        # Carried on the finding itself so the planner and VERIFY can see that
+        # this one is part of a set without reloading and re-indexing the policy.
+        "family": spec.get("family"),
         "severity": spec["severity"],
         "route": route,
         "title": spec["title"],
@@ -420,6 +449,57 @@ def check_performance(fetched: Fetched, policy: dict) -> list[dict]:
 
 
 # --------------------------------------------------------------------------
+# data: the scraped feed  (D1, D2)
+# --------------------------------------------------------------------------
+def check_data(policy: dict, app_route: str) -> list[dict]:
+    """D1 freshness and D2 contract, read from data/books.json.
+
+    Evidence states the measurement and the threshold, so a human reading the
+    finding can tell how far out it is without opening anything: "last
+    successful scrape 1840s ago, threshold 900s", not "data is stale".
+    """
+    from forge import brightdata, store
+
+    out: list[dict] = []
+    watcher = brightdata.watcher()
+    max_age = int(watcher.get("max_age_seconds") or 900)
+    feed = store.read_scrape(watcher)
+
+    if feed is None:
+        # Never scraped is not the same as stale, and it fails both checks.
+        out.append(_finding(policy, "D1", app_route,
+                            f"No scraped data file exists at {watcher.get('output', 'data/books.json')}; "
+                            "no successful scrape has ever been recorded"))
+        out.append(_finding(policy, "D2", app_route,
+                            "No scraped data file exists, so the feed cannot satisfy "
+                            f"{watcher.get('contract', 'its contract')}"))
+        return out
+
+    # ---- D1: freshness, measured from last_success_at ----
+    age = store.scrape_age_seconds(watcher)
+    if age is None:
+        out.append(_finding(policy, "D1", app_route,
+                            "data/books.json carries no readable last_success_at, so the age of "
+                            "the feed cannot be established"))
+    elif age > max_age:
+        out.append(_finding(policy, "D1", app_route,
+                            f"last successful scrape {int(age)}s ago, threshold {max_age}s "
+                            f"(source {watcher.get('target_url')})"))
+
+    # ---- D2: the contract ----
+    rows = feed.get("rows") or []
+    report = brightdata.contract_report(rows)
+    if not report["ok"]:
+        out.append(_finding(policy, "D2", app_route,
+                            f"{report['reason']} (contract {watcher.get('contract')}, "
+                            f"{report['rows']} row(s) in the current feed)"))
+    elif not feed.get("contract_ok", True):
+        out.append(_finding(policy, "D2", app_route,
+                            f"the feed was written with contract_ok=false; {report['rows']} row(s) present"))
+    return out
+
+
+# --------------------------------------------------------------------------
 # the run
 # --------------------------------------------------------------------------
 def _app_route(routes: list[str]) -> str:
@@ -469,6 +549,13 @@ def run_audit(base_url: str | None = None, routes: list[str] | None = None, poli
                         findings.extend(check_dom(fetched, policy, client, base_url, link_cache))
                     except Exception as exc:
                         log.error("check_dom crashed on %s: %s", route, exc)
+
+                # Data checks read a file, so they run whether or not the app
+                # is up: a scrape can be stale while the app serves perfectly.
+                try:
+                    findings.extend(check_data(policy, app_route))
+                except Exception as exc:
+                    log.error("data checks crashed: %s", exc)
 
                 # app-level probes, once per run
                 if reachable_any:

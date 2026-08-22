@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import logging
+from datetime import datetime, timezone
 import threading
 import time
 from pathlib import Path
@@ -139,3 +140,71 @@ def save_audit(result) -> None:
 def last_audit() -> dict | None:
     with _LOCK:
         return _read(AUDIT_FILE, None)
+
+
+# --------------------------------------------------------------- scrapes --
+SCRAPE_DIR = config.REPO_ROOT / "data"
+
+
+def _scrape_path(watcher: dict) -> Path:
+    return config.REPO_ROOT / (watcher.get("output") or "data/books.json")
+
+
+def write_scrape(watcher: dict, rows: list[dict], contract_ok: bool) -> dict:
+    """Write the product feed, atomically.
+
+    tmp file then os.replace() so Pulse can never read a half-written file --
+    a torn read would render an empty product list on a page that is fine.
+
+    last_success_at is ISO8601 and is written ONLY here, on a contract-passing
+    scrape. It is the single source of freshness; nothing else may set it.
+    """
+    import os as _os
+
+    target = _scrape_path(watcher)
+    payload = {
+        "rows": rows,
+        "row_count": len(rows),
+        "last_success_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "contract_ok": bool(contract_ok),
+        "source": watcher.get("target_url"),
+        "collector_id": watcher.get("collector_id"),
+        "watcher": watcher.get("name"),
+    }
+    target.parent.mkdir(parents=True, exist_ok=True)
+    tmp = target.with_suffix(target.suffix + ".tmp")
+    tmp.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    _os.replace(tmp, target)
+    log.info("wrote %s row(s) to %s", len(rows), target.name)
+    return payload
+
+
+def read_scrape(watcher: dict | None = None) -> dict | None:
+    """The current feed, or None when nothing has ever been written."""
+    if watcher is None:
+        from forge import brightdata
+
+        watcher = brightdata.watcher()
+    try:
+        return json.loads(_scrape_path(watcher).read_text(encoding="utf-8"))
+    except Exception:
+        return None
+
+
+def scrape_age_seconds(watcher: dict | None = None) -> float | None:
+    """Seconds since the last contract-passing scrape, measured -- not generated.
+
+    None when there has never been one. A caller must render that as "no data
+    yet" rather than substituting a number.
+    """
+    data = read_scrape(watcher)
+    stamp = (data or {}).get("last_success_at")
+    if not stamp:
+        return None
+    try:
+        then = datetime.fromisoformat(stamp)
+        if then.tzinfo is None:
+            then = then.replace(tzinfo=timezone.utc)
+        return max(0.0, (datetime.now(timezone.utc) - then).total_seconds())
+    except Exception:
+        return None
