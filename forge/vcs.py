@@ -86,13 +86,26 @@ def create_branch(name: str) -> str:
 
 
 def write_files(changeset: list[dict]) -> list[str]:
+    """Write the changeset into the factory's worktree, and ONLY there.
+
+    There is deliberately no fallback to the main checkout. An earlier version
+    fell back when the worktree was missing, and a generated one-line main.py
+    landed on top of the real app and deleted every route in it. A missing
+    worktree is a bug to surface, not a reason to write into the tree a human
+    is using.
+    """
+    if not WORKTREE.exists():
+        raise VcsError(
+            "the factory worktree does not exist -- refusing to write into the main checkout. "
+            "create_branch() must run first."
+        )
     written = []
     for change in changeset or []:
         raw = (change.get("path") or "").replace("\\", "/").lstrip("./")
         if not raw.startswith(WRITABLE_PREFIXES) or ".." in raw:
             log.error("REFUSED write outside pulse/ and tests/: %s", raw)
             raise VcsError(f"refused to write {raw}: the factory cannot modify its own source")
-        target = (WORKTREE if WORKTREE.exists() else config.REPO_ROOT) / raw
+        target = WORKTREE / raw
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(change.get("content", ""), encoding="utf-8")
         written.append(raw)

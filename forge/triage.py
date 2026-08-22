@@ -83,12 +83,23 @@ Return JSON only. No preamble, no explanation outside the JSON, no markdown fenc
 
 Classify the finding as exactly one of:
 
-AUTOFIX_SAFE -- contained, well understood, fixable in one file, low blast radius. \
-The patch cannot plausibly change behaviour anything outside this codebase depends on. should_act: true.
+AUTOFIX_SAFE -- contained, well understood, fixable in one file. The audit policy names \
+the fix and it is mechanical. should_act: true. This is the NORMAL answer for the checks \
+in this policy. Concretely, treat these as AUTOFIX_SAFE unless you can name a specific \
+reason otherwise: adding security response headers, environment-guarding or disabling a \
+docs endpoint, adding a route guard for /.env or /admin, setting cookie flags, stripping a \
+version-bearing header, adding alt text, adding rel=noopener, adding a title or meta \
+description, fixing a broken internal link.
 
-NEEDS_HUMAN_DESIGN -- a real problem, but the fix has consequences we cannot reason \
-about from outside: CORS policy, authentication, session handling, anything a client \
-might depend on. Open an issue with the analysis and write no code. should_act: false.
+NEEDS_HUMAN_DESIGN -- a real problem where the SAFE DIRECTION IS GENUINELY AMBIGUOUS and \
+you would be guessing at intent: CORS origin allowlists, authentication and authorization, \
+session handling, data retention -- anything where two reasonable engineers would pick \
+different fixes. should_act: false. The bar is a CONCRETE, NAMEABLE dependency or a \
+genuinely ambiguous direction, NOT the theoretical possibility that something somewhere \
+relies on a misconfiguration. "An external consumer might depend on this" is not \
+enough unless you can say who and why from the evidence in front of you -- that reasoning \
+applied to every reachable endpoint declines every finding, and a factory that fixes \
+nothing is not safer, just broken.
 
 FALSE_POSITIVE -- the check fired but is wrong in this context. The classic case is a \
 string that pattern-matches a credential but is a Subresource Integrity hash, a public \
@@ -115,9 +126,19 @@ lots of failed checks. The only way to tell them apart is whether the page retur
 content at all. If real content came back, the app is up and the finding is about the app; \
 do not classify it as an outage.
 
-confidence is your own calibration, 0 to 1. If you are below 0.5, prefer a classification \
-that declines: a human reviewing an unnecessary escalation costs minutes, an unnecessary \
-patch costs trust."""
+WHAT HAPPENS TO YOUR DECISION -- this changes the risk calculus, so weigh it.
+
+You are not deploying anything. A patch you mark AUTOFIX_SAFE is written, its tests are \
+run, the app is re-audited to confirm the finding is closed and that no new HIGH finding \
+appeared, and then a HUMAN READS THE DIFF AND APPROVES IT before it merges. Nothing you \
+approve reaches production unreviewed. So the cost of proposing a contained fix is one \
+person glancing at a small diff; the cost of declining is that a real security hole stays \
+open and a person has to do the work by hand.
+
+Decline when the fix genuinely needs a design decision. Do not decline merely because a \
+change has consequences -- every change does.
+
+confidence is your own calibration, 0 to 1."""
 
 
 # --------------------------------------------------------------------------

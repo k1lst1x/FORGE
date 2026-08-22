@@ -108,6 +108,22 @@ async def _open_fix_runs(result, dropped: list[str]) -> None:
         [f for f in result.findings_high if f.get("route") in dropped],
         key=lambda f: f.get("route") or "",
     )
+    # Do not spend a model call on a check the policy already says must be
+    # escalated -- triage would only reach the same conclusion, for money.
+    try:
+        from forge import audit as audit_mod
+
+        by_id = audit_mod.load_policy()["by_id"]
+        candidates = [f for f in candidates
+                      if by_id.get(f.get("check_id"), {}).get("action") != "escalate"]
+    except Exception:
+        pass
+
+    # Prefer the most contained work first: a route guard or a config flag is
+    # far likelier to be safely autofixable than a policy-shaped header.
+    preference = {"S9": 0, "S12": 1, "S11": 2, "S10": 3, "S7": 4, "S6": 5}
+    candidates.sort(key=lambda f: (preference.get(f.get("check_id"), 9), f.get("route") or ""))
+
     fresh = [f for f in candidates if not _in_cooldown(f.get("finding_id", ""))]
     if not fresh:
         if candidates:

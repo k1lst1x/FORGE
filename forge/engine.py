@@ -191,6 +191,26 @@ def _page_source(finding: dict) -> str:
     return fetched or ""
 
 
+def _prior_attempts(cr: ChangeRequest) -> list[dict]:
+    """Runs that already tried to fix this same check on this same route."""
+    finding = cr.finding or {}
+    rows = _safe(store.list_runs, 50) or []
+    history = []
+    for row in rows:
+        if row.get("run_id") == cr.run_id:
+            continue
+        if row.get("check_id") == finding.get("check_id") and row.get("route") == finding.get("route"):
+            history.append({
+                "run_id": row.get("run_id"),
+                "check_id": row.get("check_id"),
+                "route": row.get("route"),
+                "status": "in_flight" if row.get("status") in ("running", "awaiting_approval") else "closed",
+                "outcome": row.get("outcome"),
+                "classification": row.get("classification"),
+            })
+    return history
+
+
 def _affected_routes(cr: ChangeRequest) -> list[str]:
     """Which routes the closing audit checks.
 
@@ -293,7 +313,11 @@ def context(cr: ChangeRequest, span) -> ChangeRequest:
         cr.context["file_contents"] = (
             {str(source_file): _read_text(source_file) or ""} if source_file else {}
         )
-        cr.context["history"] = _safe(store.open_findings, route) or []
+        # History means PRIOR FIX ATTEMPTS, not currently-open findings.
+        # Passing open findings put the finding under triage into its own
+        # history, and the model correctly read that as "already in flight" and
+        # returned DUPLICATE for everything -- so nothing was ever fixed.
+        cr.context["history"] = _prior_attempts(cr)
     else:
         pulse = Path(config.PULSE_DIR)
         routes_dir, templates_dir = pulse / "routes", pulse / "templates"
