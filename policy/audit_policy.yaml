@@ -13,6 +13,19 @@
 # category: security | quality | performance
 # scope:    page (per route) | app (per deployment, attributed to the app root)
 # action:   autofix (contained) | escalate (blast radius we cannot reason about)
+# family:   checks that share ONE fix and must be closed together (optional)
+#
+# FAMILIES
+# --------------------------------------------------------------------------
+# S1-S6 are six findings with one fix: a single security-headers middleware.
+# Patching them one at a time is unwinnable -- close S1 and the re-audit still
+# reports S2-S6 on that route, so the run never comes back clean and every
+# attempt burns a model call to make the same partial change again.
+#
+# A check with a `family` is never planned alone. The planner is handed EVERY
+# open finding in that family on that route and must close all of them in one
+# change; VERIFY then expects all of them gone, not just the one that opened
+# the run. One middleware, one patch, one review.
 #
 # Owner: Rohit.
 
@@ -38,6 +51,7 @@ checks:
     category: security
     scope: page
     action: autofix
+    family: security_headers
     fix_hint: Add security-headers middleware setting Content-Security-Policy
 
   - id: S2
@@ -46,6 +60,7 @@ checks:
     category: security
     scope: page
     action: autofix
+    family: security_headers
     fix_hint: Same security-headers middleware; set X-Frame-Options DENY or CSP frame-ancestors none
 
   - id: S3
@@ -54,6 +69,7 @@ checks:
     category: security
     scope: page
     action: autofix
+    family: security_headers
     fix_hint: Same middleware; add Strict-Transport-Security with max-age
 
   - id: S4
@@ -62,6 +78,7 @@ checks:
     category: security
     scope: page
     action: autofix
+    family: security_headers
     fix_hint: Same middleware; add X-Content-Type-Options nosniff
 
   - id: S5
@@ -70,6 +87,7 @@ checks:
     category: security
     scope: page
     action: autofix
+    family: security_headers
     fix_hint: Same middleware; add Referrer-Policy no-referrer
 
   - id: S6
@@ -78,6 +96,7 @@ checks:
     category: security
     scope: page
     action: autofix
+    family: security_headers
     fix_hint: Strip or blank the Server and X-Powered-By headers in middleware
 
   - id: S7
@@ -168,3 +187,23 @@ checks:
     scope: page
     action: escalate
     fix_hint: Needs analysis before a change -- profile the route, a human decides
+
+  # ---------------- data: the scraped feed Pulse renders ----------------
+  # These run in the same pass as S1-S12 and Q1-Q4 and produce findings in the
+  # identical shape, so a stale feed is triaged, fixed and graded exactly like a
+  # missing security header.
+  - id: D1
+    title: Scraped data is fresh
+    severity: MED
+    category: data
+    scope: app
+    action: autofix
+    fix_hint: Run the scrape, or fix the scheduler tick that should be running it
+
+  - id: D2
+    title: Scraped data passes its contract
+    severity: HIGH
+    category: data
+    scope: app
+    action: autofix
+    fix_hint: Heal the collector so its selectors match the page again, then approve the heal

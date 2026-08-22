@@ -60,6 +60,13 @@ FORGE_CONTROL_PORT = _int("FORGE_CONTROL_PORT", 8000)
 FORGE_CONTROL_URL = os.getenv("FORGE_CONTROL_URL", f"http://localhost:{FORGE_CONTROL_PORT}")
 
 AUDIT_INTERVAL_SECONDS = _int("AUDIT_INTERVAL_SECONDS", 300)
+
+#: The scrape runs on its OWN clock, deliberately slower than the audit. Bright
+#: Data falls back to a batch job on this target and a batch run takes minutes,
+#: so starting one every audit tick queued work faster than it could finish. The
+#: two are decoupled: the audit reads whatever is in data/books.json regardless
+#: of when it was written, so a slow scrape delays nothing.
+SCRAPE_INTERVAL_SECONDS = _int("SCRAPE_INTERVAL_SECONDS", 900)
 AUDIT_ROUTES = [r.strip() for r in os.getenv("AUDIT_ROUTES", "/,/products,/security").split(",") if r.strip()]
 MAX_PLAN_ATTEMPTS = _int("FORGE_MAX_PLAN_ATTEMPTS", 3)
 FORGE_RUN_TIMEOUT_SECONDS = float(os.getenv("FORGE_RUN_TIMEOUT_SECONDS", "900"))

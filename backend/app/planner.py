@@ -28,6 +28,29 @@ it built, but it cannot change itself. vcs.write_files enforces the same rule at
 the filesystem; this is the earlier of the two gates, and it means an attempt
 shows up in the trace as a decision rather than as a crash.
 
+KNOWING WHERE THINGS LIVE (the REPO MAP)
+--------------------------------------------------------------------------
+Being allowed to write a path is not the same as that path being able to do the
+job. run_f1e86721 opened on "X-Frame-Options missing on /", justified itself
+with "add X-Frame-Options in the security-headers middleware", and then wrote
+pulse/routes/security.py -- a route module, which cannot set response headers
+for OTHER routes. The header was never set, the re-audit found the finding
+exactly as before, and the run was rejected three times and escalated. Nothing
+was wrong with VERIFY; the patch could not possibly have closed the finding.
+
+So the prompt now carries a REPO MAP as hard constraints, and for the one case
+that provably cannot work -- a response-header finding patched anywhere but
+pulse/main.py -- there is a rail here as well as a sentence in the prompt.
+
+FAMILIES: SOME FINDINGS CANNOT BE FIXED ONE AT A TIME
+--------------------------------------------------------------------------
+S1-S6 are six findings with one fix: a single security-headers middleware.
+Closing them individually is unwinnable, because after S1 is closed the
+re-audit still reports S2-S6 on that route and the run never comes back clean.
+A finding with a `family` in policy/audit_policy.yaml arrives here with every
+open sibling on that route attached, and the change has to close all of them at
+once. VERIFY checks the whole family, not just the finding that opened the run.
+
 OWNER: ROHIT.
 """
 from __future__ import annotations
@@ -50,6 +73,58 @@ MAX_EXCERPT = int(os.getenv("FORGE_PLANNER_MAX_EXCERPT", "6000"))
 
 #: The only two places the factory is allowed to write.
 WRITABLE_PREFIXES = ("pulse/", "tests/")
+
+#: The family whose fix is a single app-wide middleware, and the one file that
+#: can hold it. A route module only runs for its own paths, so a header set
+#: there is absent everywhere else -- which is why this is a rail and not advice.
+HEADER_FAMILY = "security_headers"
+MIDDLEWARE_FILE = "pulse/main.py"
+ROUTE_MODULE_PREFIX = "pulse/routes/"
+
+#: Handed to the model as hard constraints, so "where does this go" is not
+#: something it has to infer from a file listing it was never shown.
+REPO_MAP = """THE REPO MAP -- WHERE THINGS LIVE. THESE ARE HARD CONSTRAINTS, NOT SUGGESTIONS.
+
+  Response headers, middleware, CORS, app-wide configuration, docs_url guards,
+  exception handlers, guards for sensitive paths
+      -> pulse/main.py, and NOTHING under pulse/routes/.
+         A route module cannot set response headers for OTHER routes. Its
+         handlers only run for their own paths, so a header set there is absent
+         from every other page and the re-audit reports the finding unchanged.
+         A patch under pulse/routes/ CANNOT close a header finding. This is not
+         a style preference -- it is the exact mistake that got the last three
+         attempts at this rejected.
+
+  Page content, alt text, meta description, title, rel="noopener"
+      -> pulse/templates/<page>.html
+
+  Route behaviour, and the data a page is given
+      -> pulse/routes/<name>.py
+
+  Tests
+      -> tests/test_<thing>.py
+
+Plainly: IF THE FINDING IS ABOUT A RESPONSE HEADER, THE ONLY CORRECT FILE IS
+pulse/main.py. If you are about to write a route module to fix a header, stop:
+that patch cannot work and will be rejected."""
+
+#: What one security-headers middleware has to do, spelled out so it is written
+#: once and completely rather than one header per rejected attempt.
+MIDDLEWARE_SPEC = """The middleware must be ONE middleware, registered on the app in pulse/main.py,
+applied app-wide, and it must set on EVERY response:
+
+  Content-Security-Policy      a real policy, e.g. default-src 'self'
+  X-Frame-Options              DENY
+  Strict-Transport-Security    with a max-age, e.g. max-age=31536000; includeSubDomains
+  X-Content-Type-Options       nosniff
+  Referrer-Policy              no-referrer
+
+and it must STRIP the Server header (uvicorn sends its own version, which is
+what S6 fires on) along with X-Powered-By if present.
+
+Write it once. Do not add one header per attempt, and do not add a second
+middleware next to an existing one -- if pulse/main.py already has a
+security-headers middleware, extend that one."""
 
 
 class PlannerUnavailable(RuntimeError):
@@ -164,36 +239,188 @@ def _policy_requirements(policy) -> str:
 
     lines = []
     for check in checks:
-        lines.append(f"  [{check['id']} {check['severity']}] {check['title']} -- {check['fix_hint']}")
+        family = check.get("family")
+        tail = f" [family {family}: these are fixed together, in one change]" if family else ""
+        lines.append(
+            f"  [{check['id']} {check['severity']}] {check['title']} -- {check['fix_hint']}{tail}"
+        )
+    return "\n".join(lines)
+
+
+# --------------------------------------------------------------------------
+# families -- findings that share one fix and must be closed together
+# --------------------------------------------------------------------------
+def _family_name(finding, family) -> str | None:
+    """The family this run is closing, from the caller or from the finding."""
+    if isinstance(family, dict) and family.get("name"):
+        return family["name"]
+    return (finding or {}).get("family")
+
+
+def _family_block(finding, family) -> str:
+    """Every open finding in the family, and the one fix that closes them.
+
+    Without this the run is unwinnable: the planner closes S1, the re-audit
+    still reports S2-S6 on the same route, VERIFY rejects, and attempt two
+    closes S2 and meets S1, S3, S4, S5 and S6 again. Six findings to lose in
+    three attempts.
+    """
+    name = _family_name(finding, family)
+    if not name:
+        return ""
+
+    findings = list((family or {}).get("findings") or []) if isinstance(family, dict) else []
+    if not findings and finding:
+        findings = [finding]
+
+    listed = "\n".join(
+        f"  {f.get('check_id')} {f.get('severity')} on {f.get('route')} -- {f.get('title')}\n"
+        f"      evidence: {f.get('evidence')}"
+        for f in findings
+    ) or "  (none listed)"
+
+    route = (finding or {}).get("route") or (findings[0].get("route") if findings else "/")
+    extra = MIDDLEWARE_SPEC if name == HEADER_FAMILY else ""
+    return f"""
+
+THIS FINDING IS PART OF THE `{name}` FAMILY -- CLOSE ALL OF IT IN ONE CHANGE
+
+These {len(findings)} finding(s) are open on {route} and share ONE fix:
+
+{listed}
+
+Closing them one at a time cannot succeed. After you close one the re-audit
+still reports the others on this route, the run is rejected, and the next
+attempt starts from here again. VERIFY checks that EVERY finding listed above
+is gone -- not just the one that opened this run.
+
+{extra}"""
+
+
+# --------------------------------------------------------------------------
+# the placement rail -- the one mistake that provably cannot work
+# --------------------------------------------------------------------------
+def _placement_for(finding, family) -> dict | None:
+    """Where a header fix is allowed to live, or None when it does not apply."""
+    if _family_name(finding, family) != HEADER_FAMILY:
+        return None
+    return {
+        "required": MIDDLEWARE_FILE,
+        "forbidden_prefix": ROUTE_MODULE_PREFIX,
+        "check_id": (finding or {}).get("check_id"),
+        "route": (finding or {}).get("route"),
+    }
+
+
+def _placement_problem(changeset, placement) -> str | None:
+    """The rejection sentence for a misplaced header patch, or None if it is fine.
+
+    This is a rail rather than only a sentence in the prompt because the failure
+    is not a matter of degree: a header written in a route module is absent from
+    every other route, so the patch cannot close the finding no matter how well
+    it is written. Catching it here costs one re-ask; letting it through costs a
+    branch, a test run, two audits and a rejected attempt.
+    """
+    if not placement:
+        return None
+    paths = [c.get("path", "") for c in changeset]
+    offenders = [p for p in paths if p.startswith(placement["forbidden_prefix"])]
+    if not offenders and placement["required"] in paths:
+        return None
+
+    lines = [
+        f"YOUR PATCH CANNOT CLOSE {placement['check_id']} ON {placement['route']}, "
+        "AND WAS NOT WRITTEN TO DISK."
+    ]
+    if offenders:
+        lines.append(
+            "You wrote " + ", ".join(offenders) + ". A route module cannot set response headers "
+            "for other routes -- its handlers only run for their own paths, so the header would "
+            "be absent everywhere else and the re-audit would report this finding unchanged."
+        )
+    if placement["required"] not in paths:
+        lines.append(
+            f"You did not touch {placement['required']}. An app-wide response header can only "
+            f"come from a middleware registered on the app, and the app is defined in "
+            f"{placement['required']}."
+        )
+    lines.append(
+        f"Return the change again with the FULL content of {placement['required']} carrying one "
+        f"security-headers middleware, and no file under {placement['forbidden_prefix']}."
+    )
     return "\n".join(lines)
 
 
 def _retry_context(previous) -> str:
     """On a retry the second call must have strictly more information than the first.
 
-    Not just "try again" -- the exact files that were produced and the exact
-    output of the verification that rejected them.
+    Not "try again". Attempt 2 has to be able to see what attempt 1 actually
+    did: WHICH FILES it wrote, the exact reason VERIFY rejected it, and whether
+    the finding was still there afterwards. Without those three, attempts 2 and
+    3 repeat attempt 1 -- which is exactly what run_f1e86721 did three times,
+    writing a route module for a header finding on every pass.
     """
     if not previous:
         return ""
     attempt = previous.get("attempt", 1)
     failure = previous.get("verify", {}) or {}
     files = previous.get("changeset") or []
+
+    paths = list(previous.get("paths") or [f.get("path") for f in files if f.get("path")])
+    written = "\n".join("  " + str(path) for path in paths) or "  (no files were produced)"
+
     rendered = "\n\n".join(
         f"--- {f.get('path')} ---\n{_excerpt(f.get('content'), 2500)}" for f in files[:3]
     ) or "(no files were produced)"
+
+    still_open = previous.get("finding_still_open")
+    if still_open is None:
+        verdict = "  not recorded"
+    elif still_open:
+        verdict = (
+            "  YES. The finding this run exists to close was STILL THERE in the fresh audit of\n"
+            "  your patch. Whatever you changed, it did not change the thing being measured."
+        )
+    else:
+        verdict = "  No -- the target finding was closed, but the change was rejected for the reason below."
+
+    family_open = previous.get("family_still_open") or []
+    family_line = ""
+    if family_open:
+        family_line = (
+            "\n\nSTILL OPEN IN THIS FAMILY AFTER YOUR LAST ATTEMPT: " + ", ".join(str(c) for c in family_open)
+            + "\n  All of them have to be closed by ONE change. Closing a subset is a rejection."
+        )
+
+    diagnosis = ""
+    misplaced = [p for p in paths if str(p).startswith(ROUTE_MODULE_PREFIX)]
+    if misplaced and still_open:
+        diagnosis = (
+            "\n\nDIAGNOSIS OF YOUR LAST ATTEMPT: you wrote " + ", ".join(misplaced) + ", which is a "
+            "route\nmodule. A route module cannot set response headers for other routes, so the "
+            "header\nwas never set and the audit found the finding exactly as before. Editing that "
+            "file\nagain cannot work. Write the middleware in " + MIDDLEWARE_FILE + "."
+        )
+
     return f"""
 
 THIS IS ATTEMPT {attempt + 1}. YOUR PREVIOUS ATTEMPT WAS REJECTED.
 
-What you produced last time:
-{rendered}
+FILES YOUR PREVIOUS ATTEMPT WROTE -- if one of these was the wrong file, that is the bug:
+{written}
 
-Why it was rejected -- this is the actual output of the verification, not a summary:
+WAS THE FINDING STILL PRESENT AFTER YOUR PATCH?
+{verdict}{family_line}{diagnosis}
+
+WHY IT WAS REJECTED -- this is the actual output of the verification, not a summary:
   tests passed:        {failure.get('tests_passed')}
   findings closed:     {failure.get('findings_closed')}
   findings introduced: {failure.get('findings_introduced')}
+  rejected because:    {failure.get('rejected_reason') or '(see the evidence below)'}
   evidence:            {failure.get('evidence')}
+
+What you produced last time:
+{rendered}
 
 Read that failure carefully and fix the actual cause. Do not resubmit the same files.
 If the failure says a NEW finding was introduced, your previous patch closed one hole
@@ -337,37 +564,107 @@ def _accept(data: dict, usage: dict, attempt: int, file_contents=None) -> Change
     )
 
 
-def _generate(user: str, attempt: int, client=None, file_contents=None) -> ChangeSet:
+#: Kept as an exact phrase: it is what the re-ask is recognised by, in the
+#: prompt and in tests/test_planner.py.
+MISSING_TEST_REASK = (
+    "Your previous response contained no file under tests/. Rule 3 is not optional: return the "
+    "same change again, with a real test file that exercises the behaviour you changed. Include "
+    "every file from your previous response as well."
+)
+
+
+def _violations(changeset, placement) -> list[str]:
+    """What is wrong with a changeset before it is worth writing to disk."""
+    problems = []
+    if not changeset.test_included:
+        problems.append(MISSING_TEST_REASK)
+    misplaced = _placement_problem(changeset, placement)
+    if misplaced:
+        problems.append(misplaced)
+    return problems
+
+
+def _generate(user: str, attempt: int, client=None, file_contents=None, placement=None) -> ChangeSet:
     """The one call path. plan_fix and plan_feature differ only in `user`.
 
-    If the model forgets the test file, it gets exactly one re-ask that names
-    the omission. One, not a loop: the engine already owns retries, and burning
-    the retry budget here would hide the failure from VERIFY.
+    A changeset that is missing its test, or that puts a header fix somewhere it
+    cannot work, gets exactly ONE re-ask naming every problem at once. One, not
+    a loop: the engine already owns retries, and burning the retry budget here
+    would hide the failure from VERIFY.
+
+    A placement violation that survives the re-ask is refused outright. Writing
+    it anyway would spend a branch, a test run and two audits to be told what we
+    already know -- a header set in a route module is not set on any other route.
     """
     data, usage = _call_model(user, attempt, client=client)
     changeset = _accept(data, usage, attempt, file_contents)
-    if changeset.test_included:
+    problems = _violations(changeset, placement)
+    if not problems:
         return changeset
 
-    reask = user + (
-        "\n\nYour previous response contained no file under tests/. Rule 3 is not optional: "
-        "return the same change again, with a real test file that exercises the behaviour you "
-        "changed. Include every file from your previous response as well."
-    )
-    log.info("re-asking the planner for the missing test file")
+    reask = user + "\n\n" + "\n\n".join(problems)
+    log.info("re-asking the planner: %s problem(s) with the first response", len(problems))
     data, retry_usage = _call_model(reask, attempt, client=client)
     second = _accept(data, retry_usage, attempt, file_contents)
     second.tokens_in += usage["tokens_in"]
     second.tokens_out += usage["tokens_out"]
+
+    still_misplaced = _placement_problem(second, placement)
+    if still_misplaced:
+        log.error("planner kept the header fix out of %s after a re-ask", MIDDLEWARE_FILE)
+        raise PlannerUnavailable(
+            "The patch was written outside " + MIDDLEWARE_FILE + " twice, and a response header "
+            "set anywhere else is not set on the route this finding is about. Refusing to spend a "
+            "verification run proving that again.\n\n" + still_misplaced
+        )
     return second
 
 
 # --------------------------------------------------------------------------
 # entry point 1 -- a finding becomes a patch
 # --------------------------------------------------------------------------
-def plan_fix(finding, triage, file_contents, policy, *, previous=None, attempt=1, client=None) -> ChangeSet:
+def plan_fix(
+    finding,
+    triage,
+    file_contents,
+    policy,
+    *,
+    previous=None,
+    attempt=1,
+    client=None,
+    family=None,
+) -> ChangeSet:
+    """A finding becomes a patch.
+
+    `family` is {"name": str, "findings": [...]} when this finding belongs to a
+    set that shares one fix (S1-S6 and the security-headers middleware). The
+    whole set is put in front of the model and the whole set has to be closed --
+    see the module docstring for why one at a time cannot converge.
+    """
     finding = finding or {}
     triage = triage or {}
+    placement = _placement_for(finding, family)
+    family_block = _family_block(finding, family)
+
+    if family_block:
+        scope = (
+            "Close EVERY finding in the family listed above, on "
+            + str(finding.get("route"))
+            + ", with ONE change. Do not fix findings outside that family -- those are triaged "
+            "separately and a patch that changes five unrelated things is a patch no human can "
+            "review."
+        )
+    else:
+        scope = (
+            "Make the MINIMAL change that closes "
+            + str(finding.get("check_id"))
+            + " on "
+            + str(finding.get("route"))
+            + " without touching unrelated behaviour. Do not fix other findings you happen to "
+            "notice -- each one is triaged separately and a patch that changes five things is a "
+            "patch no human can review."
+        )
+
     user = f"""Close this finding from an audit of an app this factory built.
 
 THE FINDING
@@ -381,6 +678,9 @@ THE FINDING
 WHY THIS ONE IS SAFE TO PATCH AUTOMATICALLY -- triage decided this, act within it
   classification: {triage.get('classification')}
   reasoning:      {triage.get('justification')}
+{family_block}
+
+{REPO_MAP}
 
 THE CURRENT CONTENT OF THE FILE THAT SERVES THAT ROUTE
 {_render_files(file_contents)}
@@ -388,14 +688,11 @@ THE CURRENT CONTENT OF THE FILE THAT SERVES THAT ROUTE
 THE AUDIT POLICY -- your output is checked against every one of these
 {_policy_requirements(policy)}
 
-Make the MINIMAL change that closes {finding.get('check_id')} on {finding.get('route')}
-without touching unrelated behaviour. Do not fix other findings you happen to notice --
-each one is triaged separately and a patch that changes five things is a patch no human
-can review. Return the full content of every file you change, plus a test that fails
+{scope} Return the full content of every file you change, plus a test that fails
 before your change and passes after it.{_retry_context(previous)}
 
 Return JSON only."""
-    return _generate(user, attempt, client=client, file_contents=file_contents)
+    return _generate(user, attempt, client=client, file_contents=file_contents, placement=placement)
 
 
 # --------------------------------------------------------------------------
@@ -408,6 +705,8 @@ def plan_feature(brief_text, existing_routes, templates, policy, *, previous=Non
 
 THE BRIEF
 {_excerpt(brief_text, 3000)}
+
+{REPO_MAP}
 
 EXISTING ROUTE FILES -- match this style, these imports, these conventions
 {listing}

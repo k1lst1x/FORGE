@@ -154,6 +154,18 @@ def current_run():
 
 @app.get("/api/runs/{run_id}")
 def run_detail(run_id: str):
+    """One run, including its whole verification history.
+
+    `verify` is a LIST with one entry per attempt --
+
+        [{attempt, ok, tests_passed, tests_output, findings_closed,
+          findings_introduced, findings_still_open, rejected_reason}]
+
+    -- because a run that was rejected three times and escalated used to arrive
+    here with no verify data at all. Working out that attempt 1 had edited a
+    file which could not close the finding meant reading an hour of logs. The
+    run already knew; it just was not saying.
+    """
     found = store.get_run(run_id)
     if not found:
         raise HTTPException(status_code=404, detail="unknown run")

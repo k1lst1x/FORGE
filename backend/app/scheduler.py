@@ -10,6 +10,28 @@ also what fills SigNoz with real history all day without anyone doing anything.
     persists findings
   * when a route drops below Silver it POSTs to our own /intake/finding, which
     is the same handler a SigNoz alert hits. Same code path, faster trigger.
+
+THE SCRAPE RUNS ON ITS OWN CLOCK, IN ITS OWN THREAD
+--------------------------------------------------------------------------
+Bright Data refuses --sync on this target and falls back to a BATCH job, which
+takes minutes. The scrape used to run inline at the top of every audit tick, so
+a five-minute audit loop was waiting on a job that could not finish inside it.
+
+The two are decoupled:
+
+  * the scrape starts every SCRAPE_INTERVAL_SECONDS (900 by default), the audit
+    keeps its own AUDIT_INTERVAL_SECONDS
+  * the scrape runs in a daemon thread the tick does not join. The audit runs
+    immediately, against whatever is in data/books.json right now
+  * if a scrape is still in flight when the next tick fires, the tick SKIPS
+    starting another one and audits anyway. Never two collectors at once, and
+    never a tick blocked on one
+
+That ordering means an audit can grade a feed the previous scrape wrote. That
+is correct and intended: freshness is a check (D1), measured from
+last_success_at, not an assumption the tick makes about its own timing.
+watchers/books.yaml sets max_age_seconds above one interval plus one batch run
+so D1 does not fire on our own pipeline being slow.
 """
 from __future__ import annotations
 
@@ -17,6 +39,7 @@ import asyncio
 import json
 import logging
 import os
+import threading
 import time
 
 import httpx
@@ -26,7 +49,15 @@ from app.models import GRADE_VALUE, SILVER
 
 log = logging.getLogger("forge.scheduler")
 
-_STATE = {"running": False, "last_run": None, "runs": 0, "failures": 0, "last_error": None}
+_STATE = {"running": False, "last_run": None, "runs": 0, "failures": 0,
+          "last_error": None, "last_scrape": None}
+
+#: The in-flight scrape, if there is one. A thread rather than an asyncio task
+#: on purpose: scrape_once() is blocking subprocess work, nothing awaits it, and
+#: a daemon thread does not keep the process alive at shutdown or leave a
+#: pending task behind when a caller's event loop closes.
+_SCRAPE = {"thread": None, "started_at": None, "last_started": None,
+           "skipped": 0, "runs": 0}
 
 #: A finding that was already attempted is not retried until this expires.
 #: Without it an escalated finding stays open, is picked up on the next tick,
@@ -56,7 +87,167 @@ def _in_cooldown(finding_id: str) -> bool:
 
 
 def state() -> dict:
-    return dict(_STATE)
+    return dict(_STATE, scrape=scrape_state())
+
+
+def scrape_state() -> dict:
+    """What the scrape clock is doing, for /health and the console.
+
+    in_flight_seconds is the honest answer to "why has data/books.json not
+    moved" -- a batch job that started four minutes ago has not failed.
+    """
+    thread, started = _SCRAPE["thread"], _SCRAPE["started_at"]
+    in_flight = bool(thread is not None and thread.is_alive())
+    return {
+        "in_flight": in_flight,
+        "in_flight_seconds": round(time.time() - started, 1) if (in_flight and started) else None,
+        "interval_seconds": scrape_interval(),
+        "last_started": _SCRAPE["last_started"],
+        "runs": _SCRAPE["runs"],
+        "ticks_skipped_while_in_flight": _SCRAPE["skipped"],
+        "timeout_seconds": _scrape_timeout(),
+    }
+
+
+def _scrape_timeout() -> int:
+    from app import brightdata
+
+    return brightdata.HARD_TIMEOUT_SECONDS
+
+
+def scrape_interval() -> float:
+    """Seconds between scrapes. The watcher owns it, the environment overrides.
+
+    Deliberately NOT AUDIT_INTERVAL_SECONDS. A batch run takes minutes; starting
+    one every audit tick queued work faster than Bright Data could finish it.
+    """
+    if os.getenv("SCRAPE_INTERVAL_SECONDS"):
+        return float(config.SCRAPE_INTERVAL_SECONDS)
+    try:
+        from app import brightdata
+
+        configured = (brightdata.watcher().get("run") or {}).get("interval_seconds")
+    except Exception:
+        configured = None
+    try:
+        return float(configured) if configured else float(config.SCRAPE_INTERVAL_SECONDS)
+    except (TypeError, ValueError):
+        return float(config.SCRAPE_INTERVAL_SECONDS)
+
+
+def scrape_in_flight() -> bool:
+    thread = _SCRAPE["thread"]
+    return bool(thread is not None and thread.is_alive())
+
+
+def scrape_due() -> bool:
+    last = _SCRAPE["last_started"]
+    return last is None or (time.time() - last) >= scrape_interval()
+
+
+def start_scrape(force: bool = False) -> dict:
+    """Start a scrape in its own thread, or say why one was not started.
+
+    NEVER blocks and never raises. The caller -- an audit tick -- carries on
+    immediately, which is the whole point: a batch job that takes minutes must
+    not hold up a check suite that takes seconds.
+    """
+    if scrape_in_flight():
+        _SCRAPE["skipped"] += 1
+        held = round(time.time() - (_SCRAPE["started_at"] or time.time()), 1)
+        log.info(
+            "scrape still in flight after %ss -- skipping this tick's scrape and auditing anyway",
+            held,
+        )
+        return {"started": False, "reason": "in_flight", "in_flight_seconds": held}
+
+    if not force and not scrape_due():
+        due_in = round(scrape_interval() - (time.time() - (_SCRAPE["last_started"] or 0)), 1)
+        return {"started": False, "reason": "not_due", "due_in_seconds": max(due_in, 0.0)}
+
+    def _work() -> None:
+        try:
+            scrape_once()  # looked up at call time so tests can substitute it
+        except Exception:  # scrape_once already swallows everything; belt and braces
+            log.exception("scrape thread died")
+        finally:
+            _SCRAPE["started_at"] = None
+
+    thread = threading.Thread(target=_work, name="forge-scrape", daemon=True)
+    _SCRAPE.update({"thread": thread, "started_at": time.time(),
+                    "last_started": time.time(), "runs": _SCRAPE["runs"] + 1})
+    thread.start()
+    log.info("scrape started in the background (timeout %ss, next due in %ss)",
+             _scrape_timeout(), int(scrape_interval()))
+    return {"started": True, "reason": "due"}
+
+
+def await_scrape(timeout: float = 30.0) -> bool:
+    """Join the in-flight scrape. For tests and scripts ONLY -- never a tick."""
+    thread = _SCRAPE["thread"]
+    if thread is None:
+        return True
+    thread.join(timeout)
+    return not thread.is_alive()
+
+
+def scrape_once() -> dict:
+    """One scrape, inside span forge.scrape. NEVER raises.
+
+    A third-party site being slow or down must not stop the factory auditing the
+    app it built. Every failure is logged at ERROR with the exception, recorded
+    on the span and as a metric, and the previous data/books.json is left exactly
+    as it was -- which is what lets D1 and D2 report it as a finding on the next
+    pass instead of the data silently vanishing.
+    """
+    from app import brightdata, store, telemetry
+
+    watcher = brightdata.watcher()
+    outcome = {"ok": False, "rows": 0, "reason": None, "wrote": False}
+
+    with telemetry.stage_span("forge.scrape", "scrape") as span:
+        def tag(**kw):
+            if span is None:
+                return
+            for k, v in kw.items():
+                try:
+                    span.set_attribute(k, v)
+                except Exception:
+                    pass
+
+        tag(**{"scrape.watcher": watcher.get("name", "books"),
+               "scrape.collector_id": watcher.get("collector_id", "none")})
+        try:
+            rows = brightdata.scraper_run()
+            validated = brightdata.validate_contract(rows)
+            store.write_scrape(watcher, validated, contract_ok=True)
+            outcome.update(ok=True, rows=len(validated), wrote=True)
+            tag(**{"scrape.rows": len(validated), "scrape.contract_ok": True})
+            log.info("scrape ok: %s row(s) written", len(validated))
+
+        except brightdata.ContractViolation as exc:
+            # Rows came back but are not usable. Keep the previous file.
+            outcome["reason"] = str(exc)
+            tag(**{"scrape.contract_ok": False, "scrape.error": str(exc)[:300]})
+            telemetry.counter("forge_scrape_failures_total", 1, reason="contract")
+            log.error("scrape contract failed, keeping previous data: %s", exc, exc_info=True)
+
+        except Exception as exc:
+            outcome["reason"] = str(exc)
+            reason = "timeout" if exc.__class__.__name__ == "ScrapeTimeout" else "error"
+            tag(**{"scrape.error": str(exc)[:300]})
+            telemetry.counter("forge_scrape_failures_total", 1, reason=reason)
+            log.error("scrape failed (%s), keeping previous data: %s",
+                      exc.__class__.__name__, exc, exc_info=True)
+
+        if not outcome["ok"] and span is not None:
+            try:
+                span.add_event("forge.scrape_failed", {"reason": (outcome["reason"] or "")[:300]})
+            except Exception:
+                pass
+
+    _STATE["last_scrape"] = {"at": time.time(), **outcome}
+    return outcome
 
 
 async def run_once(trigger: str = "scheduled") -> dict:
@@ -68,6 +259,13 @@ async def run_once(trigger: str = "scheduled") -> dict:
     _STATE["running"] = True
     started = time.time()
     try:
+        # The scrape is STARTED here and deliberately not waited on. Bright Data
+        # falls back to a batch job on this target, so the scrape can outlive
+        # several audit ticks -- joining it would stop the factory auditing the
+        # app it built because a third party is slow. If one is still running,
+        # this tick does not start another and audits anyway.
+        scrape = start_scrape()
+
         result = await asyncio.to_thread(audit.run_audit, config.PULSE_BASE_URL, config.AUDIT_ROUTES)
         store.save_findings(f"audit_{int(started)}", result.findings, result.routes_checked)
         store.save_audit(result)
@@ -88,12 +286,18 @@ async def run_once(trigger: str = "scheduled") -> dict:
             "grades": result.grades,
             "reachable": result.reachable,
             "below_silver": dropped,
+            "scrape": scrape,
         }
     except Exception as exc:
         _STATE.update({"failures": _STATE["failures"] + 1, "last_error": str(exc)})
         log.exception("audit tick failed")
         return {"error": str(exc)}
     finally:
+        # Released here and nowhere else: an audit that raises must not leave
+        # the guard latched, or every later tick skips itself as an overlap and
+        # the factory goes quiet without a single error. Note this guards the
+        # AUDIT only -- the scrape has its own in-flight check and its own
+        # thread, so a batch job that outlives the tick never latches this.
         _STATE["running"] = False
 
 
@@ -147,7 +351,11 @@ async def _open_fix_runs(result, dropped: list[str]) -> None:
 
 async def loop() -> None:
     interval = max(config.AUDIT_INTERVAL_SECONDS, 10)
-    log.info("audit scheduler started: every %ss against %s", interval, config.PULSE_BASE_URL)
+    log.info(
+        "audit scheduler started: audit every %ss against %s, scrape every %ss "
+        "(batch job, %ss timeout, never on the audit's thread)",
+        interval, config.PULSE_BASE_URL, int(scrape_interval()), _scrape_timeout(),
+    )
     while True:
         try:
             summary = await run_once()

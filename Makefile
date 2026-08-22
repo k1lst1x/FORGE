@@ -11,7 +11,7 @@ MODE ?= 1
 ROUTES ?= / /products
 URL ?= http://localhost:8100
 
-.PHONY: help up audit brief inject restore inject-status inject-smoke triage-smoke test trace clean security-preview
+.PHONY: help up audit brief inject restore inject-status inject-smoke triage-smoke test trace clean security-preview scrape scrape-wait
 
 help:
 	@echo "  make audit                 run the 17 checks once against $(URL)"
@@ -61,3 +61,12 @@ clean:
 
 security-preview:
 	$(PY) scripts/security_preview.py --url $(URL)
+
+# Default is --no-wait: Bright Data batches this target and a batch run takes
+# minutes, so `make scrape` starts the job and returns. `make scrape-wait`
+# blocks when you actually want the rows in front of you.
+scrape:
+	$(PY) scripts/scrape.py --no-wait
+
+scrape-wait:
+	$(PY) scripts/scrape.py --wait

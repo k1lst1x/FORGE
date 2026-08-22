@@ -1,9 +1,17 @@
 {% extends "base.html" %}
 {% block content %}
-<p>Competitor pricing, scraped live.</p>
+<p>Competitor pricing, scraped from a real source.</p>
+{% if feed.has_data %}
 <ul>
   <li>{{ count }} products tracked</li>
   <li>{{ out_of_stock }} currently out of stock</li>
-  <li>Last scrape: {{ freshness.age_seconds }}s ago from {{ freshness.source }}</li>
+  <li>Last successful scrape <strong>{{ feed.age_seconds|int }}s</strong> ago
+      from {{ feed.source }}</li>
 </ul>
+{% else %}
+<p><strong>No data yet.</strong> No scrape has ever succeeded, so there is
+nothing to show. This is not the same as zero products &mdash; the feed has
+never been written. Run <code>python scripts/scrape.py</code>, or wait for the
+scheduler's next tick.</p>
+{% endif %}
 {% endblock %}
