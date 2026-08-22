@@ -19,6 +19,9 @@ def test_create_factory_run() -> None:
     assert body["status"] == "awaiting_human"
     assert body["steps"][-1]["name"] == "release"
     assert body["findings"][0]["check_id"] == "S1"
+    assert body["verify"]
+    assert body["verify"][-1]["tests_passed"] is True
+    assert body["verify"][-1]["attempt"] == 1
 
 
 def test_create_planned_factory_run() -> None:
@@ -205,6 +208,17 @@ def test_port_upsert_run_uses_real_entity_payload(monkeypatch) -> None:
     entity_payload = next(payload for method, url, payload in calls if url.endswith("/blueprints/forge_run/entities"))
     assert entity_payload["properties"]["status"] == "awaiting_human"
     assert entity_payload["properties"]["trace_id"] == "trace-123"
+
+
+def test_factory_run_timeout_marks_failed(monkeypatch) -> None:
+    import app.factory.engine as engine
+
+    monkeypatch.setattr(engine, "_deadline_seconds", lambda: 0.0)
+
+    run = engine.run_from_brief(brief="This should fail due to the timeout guard.")
+
+    assert run.outcome == "error"
+    assert run.status == "failed"
 
 
 def test_create_factory_run_rejects_empty_brief() -> None:
