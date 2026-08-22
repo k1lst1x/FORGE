@@ -292,16 +292,124 @@ def compare(cr, before, after, changeset) -> tuple[list, list, bool, list[str]]:
 
     if introduced:
         ok = False
-        notes.append(
-            "REJECTED -- this change introduces "
-            + str(len(introduced))
-            + " HIGH finding(s) that were not there before: "
-            + "; ".join(_describe(f) for f in introduced)
-            + ". A patch that closes one hole and opens another is not a fix."
-        )
+        if baseline:
+            notes.append(
+                "REJECTED -- this change introduces "
+                + str(len(introduced))
+                + " HIGH finding(s) that were not there before: "
+                + "; ".join(_describe(f) for f in introduced)
+                + ". A patch that closes one hole and opens another is not a fix."
+            )
+        else:
+            # Say what was actually measured. With no baseline we cannot claim
+            # these are new, only that they are present, and the evidence a
+            # human reads must not overstate what we know.
+            notes.append(
+                "REJECTED -- the patched candidate still serves "
+                + str(len(introduced))
+                + " HIGH finding(s): "
+                + "; ".join(_describe(f) for f in introduced)
+                + ". With no baseline these cannot be attributed to this change, only observed."
+            )
     if minor:
         notes.append(
             "Also new, not blocking: " + "; ".join(_describe(f) for f in minor)
         )
 
     return closed, introduced, ok, notes
+
+
+# --------------------------------------------------------------------------
+# the two checks, in order
+# --------------------------------------------------------------------------
+def _baseline(routes) -> object | None:
+    """Audit what is live now, to diff the candidate against.
+
+    Tolerant on purpose: a missing baseline tightens the rule in compare()
+    rather than failing the run outright.
+    """
+    from forge import audit as audit_mod
+
+    try:
+        return audit_mod.run_audit(config.PULSE_BASE_URL, routes)
+    except Exception as exc:
+        log.warning("verify could not establish a baseline: %s", exc)
+        return None
+
+
+def verify(changeset, cr) -> VerifyResult:
+    """Tests, then a fresh audit. Both must pass for a change to reach a human."""
+    from forge import audit as audit_mod
+
+    changeset = list(changeset or [])
+    routes = routes_under_test(changeset, cr)
+
+    # ---- check one: does it work ----
+    tests_passed, test_output = run_tests(changeset)
+    if not tests_passed:
+        return VerifyResult(
+            ok=False,
+            tests_passed=False,
+            evidence="TESTS FAILED -- not auditing a change that does not pass its own tests.\n\n" + test_output,
+        )
+
+    # ---- check two: is it still not vulnerable ----
+    before = _baseline(routes)
+    after = None
+    startup_error = None
+
+    with serve_candidate() as (base_url, error):
+        if error:
+            startup_error = error
+        else:
+            try:
+                after = audit_mod.run_audit(base_url, routes)
+            except Exception as exc:
+                startup_error = f"the fresh audit of the candidate failed to run: {type(exc).__name__}: {exc}"
+
+    if after is None:
+        return VerifyResult(
+            ok=False,
+            tests_passed=True,
+            audit_before=before.as_dict() if before is not None else {},
+            evidence=(
+                "TESTS PASSED, BUT THE CANDIDATE COULD NOT BE AUDITED.\n\n"
+                + (startup_error or "unknown startup failure")
+                + "\n\nA change whose result cannot be measured does not ship."
+            ),
+        )
+
+    closed, introduced, ok, notes = compare(cr, before, after, changeset)
+
+    evidence = [
+        "TESTS PASSED.",
+        "",
+        f"Audited {', '.join(routes)} on the patched candidate: "
+        f"{len(after.findings)} finding(s), {len(after.findings_high)} HIGH, worst grade {after.worst_grade}.",
+    ]
+    if before is not None and before.reachable:
+        evidence.append(
+            f"Baseline for comparison: {len(before.findings)} finding(s), {len(before.findings_high)} HIGH."
+        )
+    evidence.append("")
+    evidence.extend(notes)
+    evidence.append("")
+    evidence.append("VERDICT: " + ("verified -- tests pass and the audit is clean" if ok else "rejected"))
+
+    result = VerifyResult(
+        ok=ok,
+        tests_passed=True,
+        audit_before=before.as_dict() if before is not None else {},
+        audit_after=after.as_dict(),
+        findings_closed=[f.get("finding_id") for f in closed],
+        findings_introduced=[f.get("finding_id") for f in introduced],
+        evidence="\n".join(evidence).strip(),
+    )
+    log.info(
+        "verify %s: ok=%s closed=%s introduced=%s",
+        getattr(cr, "run_id", "?"),
+        result.ok,
+        len(result.findings_closed),
+        len(result.findings_introduced),
+    )
+    return result

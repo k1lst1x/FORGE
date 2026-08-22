@@ -19,6 +19,7 @@ from forge.models import (
     AuditResult,
     ChangeSet,
     TriageResult,
+    VerifyResult,
     FALSE_POSITIVE,
     NEEDS_HUMAN_DESIGN,
     NEW_FEATURE,
@@ -46,6 +47,18 @@ def _fake_triage(finding, page_source, file_context, history, **kw):
     if check_id in ("S8", "P1"):
         return TriageResult(NEEDS_HUMAN_DESIGN, False, "Blast radius reaches clients.", 0.8, "clients", decided_by="stub")
     return TriageResult(AUTOFIX_SAFE, True, "Contained to one file.", 0.8, "contained", decided_by="stub")
+
+
+def _fake_verify(changeset, cr):
+    """Verification always succeeds here. Whether it SHOULD succeed is verify's
+    problem and is tested in tests/test_verify.py -- against the real rails,
+    with real before/after audits. What the engine owes us is that it routes a
+    pass to the gate and a failure back to PLAN."""
+    return VerifyResult(ok=True, tests_passed=True, evidence="stubbed verification")
+
+
+def _failing_verify(changeset, cr):
+    return VerifyResult(ok=False, tests_passed=False, evidence="stubbed failure: assert 404 == 200")
 
 
 def _fake_plan(*args, **kwargs):
@@ -77,6 +90,7 @@ def no_network(monkeypatch):
     monkeypatch.setattr("forge.engine.triage_mod.classify", _fake_triage)
     monkeypatch.setattr("forge.engine.planner.plan_fix", _fake_plan)
     monkeypatch.setattr("forge.engine.planner.plan_feature", _fake_plan)
+    monkeypatch.setattr("forge.engine.verify_mod.verify", _fake_verify)
 
 
 FINDING = {
@@ -152,7 +166,7 @@ def test_a_false_positive_is_suppressed_with_a_reason(monkeypatch):
 
 def test_verify_failure_retries_twice_then_escalates(monkeypatch):
     """Two retries, then escalate. It must never ship an unverified change."""
-    monkeypatch.setenv("FORGE_STUB_VERIFY_FAILS", "99")
+    monkeypatch.setattr("forge.engine.verify_mod.verify", _failing_verify)
     cr = engine.run_from_finding(_finding(route="/retry-demo"))
     assert cr.attempts == engine.MAX_PLAN_ATTEMPTS == 3
     assert cr.outcome == OUTCOME_VERIFY_FAILED

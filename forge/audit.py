@@ -55,7 +55,14 @@ def load_policy(path: str | None = None) -> dict:
     cached = _POLICY_CACHE.get(path)
     if cached is not None:
         return cached
-    raw = yaml.safe_load(Path(path).read_text(encoding="utf-8"))
+    location = Path(path)
+    if not location.exists():
+        # Fall back to the copy that ships beside the package, so running from
+        # another working directory does not silently lose the policy.
+        beside = Path(__file__).resolve().parent.parent / path
+        if beside.exists():
+            location = beside
+    raw = yaml.safe_load(location.read_text(encoding="utf-8"))
     raw["by_id"] = {c["id"]: c for c in raw.get("checks", [])}
     _POLICY_CACHE[path] = raw
     return raw

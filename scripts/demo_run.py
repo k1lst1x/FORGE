@@ -6,7 +6,6 @@ scripts/demo_run.py -- drive the engine by hand.
     python scripts/demo_run.py --finding cors      # declines: blast radius
     python scripts/demo_run.py --finding sri       # declines: false positive
     python scripts/demo_run.py --finding outage    # declines: app is down
-    python scripts/demo_run.py --finding retry     # VERIFY fails twice, then passes
     python scripts/demo_run.py --all               # every path, one after another
 
 Until Damir's modules are real this runs entirely against the stubs, which is
@@ -97,16 +96,10 @@ def main() -> int:
         runs.append(("brief", engine.run_from_brief("Add a page showing out-of-stock products, sorted by price descending.")))
         for name in ("autofix", "cors", "sri", "outage"):
             runs.append((name, engine.run_from_finding(FINDINGS[name])))
-        os.environ["FORGE_STUB_VERIFY_FAILS"] = "2"
-        import importlib
-
-        importlib.reload(sys.modules["forge.verify"])
         runs.append(("retry", engine.run_from_finding(FINDINGS["retry"])))
     elif args.brief:
         runs.append(("brief", engine.run_from_brief(args.brief)))
     elif args.finding:
-        if args.finding == "retry":
-            os.environ.setdefault("FORGE_STUB_VERIFY_FAILS", "2")
         runs.append((args.finding, engine.run_from_finding(FINDINGS[args.finding])))
     else:
         parser.print_help()
