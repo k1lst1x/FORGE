@@ -12,9 +12,14 @@ window.FORGE_CONFIG = {
   // forge-control serves this directory at GET /console.
   apiBase: '',
 
-  // Supabase Auth. Leave blank and the console runs open — the rail says so.
-  // Fill both in and the console gates on a session and sends the access token
-  // as Authorization: Bearer <jwt> on every API call.
+  // ---------------------------------------------------------------------
+  // SUPABASE AUTH -- the only two values you need to fill in.
+  // Supabase dashboard -> Project Settings -> API:
+  //   supabaseUrl     = Project URL      (https://<ref>.supabase.co)
+  //   supabaseAnonKey = anon / publishable key  (safe in client code)
+  // Both blank -> the dashboard runs open and says "auth not configured".
+  // Both set   -> it gates on a real session and sends the JWT on every call.
+  // ---------------------------------------------------------------------
   supabaseUrl: '',
   supabaseAnonKey: '',
 

@@ -27,45 +27,60 @@
   var RETRYABLE = { PLAN: 1, ACT: 1, VERIFY: 1 };
 
   var CLASSES = {
-    AUTOFIX_SAFE:       { c: '#10B981', acts: true,  blurb: 'Contained. The factory will write the patch.' },
-    NEW_FEATURE:        { c: '#10B981', acts: true,  blurb: 'A coherent brief. The factory will build it.' },
+    AUTOFIX_SAFE:       { c: '#34D399', acts: true,  blurb: 'Contained. The factory will write the patch.' },
+    NEW_FEATURE:        { c: '#34D399', acts: true,  blurb: 'A coherent brief. The factory will build it.' },
     NEEDS_HUMAN_DESIGN: { c: '#F59E0B', acts: false, blurb: 'Real, but the fix has consequences outside this codebase.' },
-    FALSE_POSITIVE:     { c: '#3B82F6', acts: false, blurb: 'The check fired but is wrong in this context.' },
+    FALSE_POSITIVE:     { c: '#60A5FA', acts: false, blurb: 'The check fired but is wrong in this context.' },
     UPSTREAM_OUTAGE:    { c: '#EF4444', acts: false, blurb: 'Nothing was served, so there is nothing to fix.' },
-    DUPLICATE:          { c: '#64748B', acts: false, blurb: 'Same root cause as a run already in flight.' },
+    DUPLICATE:          { c: '#5C5C64', acts: false, blurb: 'Same root cause as a run already in flight.' },
   };
 
   var SEV = {
     HIGH: { c: '#EF4444', glyph: '■' },  // filled square
     MED:  { c: '#F59E0B', glyph: '▲' },  // triangle
-    LOW:  { c: '#3B82F6', glyph: '●' },  // circle
+    LOW:  { c: '#60A5FA', glyph: '●' },  // circle
   };
 
   var GRADES = {
-    gold:   { c: '#10B981', label: 'GOLD' },
+    gold:   { c: '#34D399', label: 'GOLD' },
     silver: { c: '#F59E0B', label: 'SILVER' },
     bronze: { c: '#EF4444', label: 'BRONZE' },
   };
 
   var FSTATUS = {
-    open:       { c: '#94A3B8', glyph: '○', label: 'open' },
-    fixing:     { c: '#3B82F6', glyph: '◐', label: 'fixing' },
-    suppressed: { c: '#64748B', glyph: '⊘', label: 'suppressed' },
+    open:       { c: '#8B8B93', glyph: '○', label: 'open' },
+    fixing:     { c: '#60A5FA', glyph: '◐', label: 'fixing' },
+    suppressed: { c: '#5C5C64', glyph: '⊘', label: 'suppressed' },
   };
 
   var OUTCOMES = {
-    merged:                    { c: '#10B981', label: 'merged' },
+    merged:                    { c: '#34D399', label: 'merged' },
     escalated:                 { c: '#F59E0B', label: 'escalated' },
-    suppressed:                { c: '#64748B', label: 'suppressed' },
-    attached_to_existing_run:  { c: '#64748B', label: 'attached' },
+    suppressed:                { c: '#5C5C64', label: 'suppressed' },
+    attached_to_existing_run:  { c: '#5C5C64', label: 'attached' },
     rejected_by_human:         { c: '#EF4444', label: 'rejected' },
     verify_failed_escalated:   { c: '#F59E0B', label: 'verify failed' },
     merge_failed:              { c: '#EF4444', label: 'merge failed' },
-    backed_off:                { c: '#64748B', label: 'backed off' },
+    backed_off:                { c: '#5C5C64', label: 'backed off' },
     error:                     { c: '#EF4444', label: 'error' },
   };
 
   var SCREENS = ['live', 'findings', 'runs', 'catalog', 'submit'];
+
+  //: one glyph per section. Inline so the dashboard needs no icon dependency.
+  var NAV_ICONS = (function () {
+    function svg(d) {
+      return '<svg width="17" height="17" viewBox="0 0 20 20" fill="none" aria-hidden="true">' +
+        d + '</svg>';
+    }
+    return {
+      live:     svg('<rect x="2.5" y="3.5" width="15" height="13" rx="2" stroke="currentColor" stroke-width="1.5"/><path d="M6 10.5l2.5 2.5L14 7.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>'),
+      findings: svg('<path d="M10 2.5l6.5 3v4.7c0 3.4-2.6 6.2-6.5 7.3-3.9-1.1-6.5-3.9-6.5-7.3V5.5l6.5-3z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><path d="M10 7.5v3M10 13h.01" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>'),
+      runs:     svg('<circle cx="10" cy="10" r="7" stroke="currentColor" stroke-width="1.5"/><path d="M10 6v4.2l2.8 1.6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>'),
+      catalog:  svg('<rect x="2.5" y="3.5" width="15" height="13" rx="2" stroke="currentColor" stroke-width="1.5"/><path d="M7.5 3.5v13" stroke="currentColor" stroke-width="1.5"/>'),
+      submit:   svg('<path d="M10 16V4M10 4L5.5 8.5M10 4l4.5 4.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>'),
+    };
+  })();
 
   var EXAMPLE_BRIEFS = [
     'Add a /pricing page with three plan tiers, a monthly/yearly toggle, and a comparison table. Every plan needs a name, a price, and a feature list.',
@@ -171,7 +186,7 @@
   }
 
   function gradeChip(grade, big) {
-    var g = GRADES[String(grade || '').toLowerCase()] || { c: '#64748B', label: String(grade || '?').toUpperCase() };
+    var g = GRADES[String(grade || '').toLowerCase()] || { c: '#5C5C64', label: String(grade || '?').toUpperCase() };
     return '<span class="inline-flex items-center border font-semibold tracking-[0.09em] ' +
       (big ? 'px-3 py-1 text-[15px]' : 'px-2 py-0.5 text-[13px]') + '" ' +
       'style="color:' + g.c + ';border-color:' + tint(g.c, 0.45) + ';background:' + tint(g.c, 0.08) + '">' +
@@ -180,7 +195,7 @@
 
   function intakeBadge(intake) {
     var brief = intake === 'brief';
-    var c = brief ? '#3B82F6' : '#F59E0B';
+    var c = brief ? '#60A5FA' : '#F59E0B';
     return chip(brief ? 'BRIEF' : 'FINDING', c, brief ? '◆' : '▲', 'font-bold tracking-[0.09em]');
   }
 
@@ -529,28 +544,48 @@
     if (S.sigs.nav === navSig) return renderRailHealth();
     S.sigs.nav = navSig;
 
-    nav.innerHTML = SCREENS.map(function (id, i) {
+    nav.innerHTML = SCREENS.map(function (id) {
       var on = S.screen === id;
       var badge = '';
       if (id === 'findings' && S.status && S.status.HIGH > 0) {
-        badge = '<span class="ml-auto text-[13px] font-semibold" style="color:#EF4444">' + S.status.HIGH + '</span>';
+        badge = '<span class="ml-auto rounded-full px-2 py-0.5 text-[12px] font-semibold" ' +
+          'style="color:#EF4444;background:rgba(239,68,68,.13)">' + S.status.HIGH + '</span>';
       }
       if (id === 'live' && S.run) {
-        badge = '<span class="ml-auto w-1.5 h-1.5 rounded-full dot-live" style="background:#10B981"></span>';
+        badge = '<span class="ml-auto h-1.5 w-1.5 rounded-full dot-live" style="background:#34D399"></span>';
       }
-      return '<a href="#' + id + '" class="flex items-center gap-3 px-3 py-2 text-[16px] ' +
-        (on ? 'bg-raise text-ink border-l-2 border-brand' : 'text-dim hover:text-ink border-l-2 border-transparent') +
-        '"><span class="font-mono text-[12px] ' + (on ? 'text-brand' : 'text-mute') + '">' + (i + 1) + '</span>' +
+      return '<a href="#' + id + '" class="group flex items-center gap-3 rounded-lg px-3 py-2.5 text-[15px] ' +
+        (on ? 'bg-white/[0.07] text-ink' : 'text-dim hover:bg-white/[0.04] hover:text-ink') + '">' +
+        '<span class="' + (on ? 'text-brand' : 'text-mute') + '">' + NAV_ICONS[id] + '</span>' +
         '<span>' + titles[id] + '</span>' + badge + '</a>';
     }).join('');
 
+    document.title = 'FORGE — ' + titles[S.screen];
+    var pt = document.getElementById('page-title');
+    if (pt) pt.textContent = titles[S.screen];
+
+    renderSideSeverity();
     renderRailHealth();
+  }
+
+  /** The severity card in the sidebar. Same three numbers as the status bar,
+   *  kept visible while you are deep in another screen. */
+  function renderSideSeverity() {
+    var host = document.getElementById('side-sev');
+    if (!host || !S.status) return;
+    var st = S.status;
+    host.innerHTML = [['HIGH', st.HIGH, '#EF4444'], ['MED', st.MED, '#F59E0B'], ['LOW', st.LOW, '#60A5FA']]
+      .map(function (r) {
+        return '<div><div class="text-[22px] font-semibold leading-none tabular-nums" style="color:' +
+          (r[1] > 0 ? r[2] : '#5C5C64') + '">' + r[1] + '</div>' +
+          '<div class="lbl mt-1 text-[10px]">' + r[0] + '</div></div>';
+      }).join('');
   }
 
   /** Cheap enough to run on every poll: writes into nodes, never replaces them. */
   function renderRailHealth() {
     var healthy = S.status && S.status.scheduler === 'healthy';
-    var c = !S.online ? '#F59E0B' : healthy ? '#10B981' : '#EF4444';
+    var c = !S.online ? '#F59E0B' : healthy ? '#34D399' : '#EF4444';
     var text = !S.online ? 'reconnecting' : healthy ? 'scheduler ok' : (S.status ? 'scheduler down' : 'connecting');
     var dot = document.querySelector('[data-health-dot]');
     var label = document.querySelector('[data-health-text]');
@@ -560,18 +595,37 @@
     }
     if (label) { label.textContent = text; label.style.color = c; }
 
-    var userBox = document.getElementById('rail-user');
+    var userBox = document.getElementById('user-menu');
     var user = window.ForgeAuth && window.ForgeAuth.user();
-    if (userBox) {
-      if (user) {
-        userBox.classList.remove('hidden');
-        userBox.innerHTML = '<div class="text-[12px] text-mute truncate" title="' + esc(user.email) + '">' +
-          esc(user.email) + '</div>' +
-          '<button data-act="signout" class="mt-1 text-[13px] text-dim hover:text-ink underline underline-offset-4">Sign out</button>';
-      } else if (window.ForgeAuth && !window.ForgeAuth.enabled()) {
-        userBox.classList.remove('hidden');
-        userBox.innerHTML = '<div class="text-[12px] text-mute">auth · not configured</div>';
-      }
+    if (!userBox) return;
+
+    var sig = user ? 'u:' + user.email : (window.ForgeAuth && window.ForgeAuth.enabled() ? 'anon' : 'off');
+    if (S.sigs.user === sig) return;
+    S.sigs.user = sig;
+
+    if (user) {
+      var email = user.email || 'signed in';
+      var initial = email.charAt(0).toUpperCase();
+      userBox.innerHTML =
+        '<button data-act="user-toggle" class="flex items-center gap-2.5 rounded-full border ' +
+          'border-white/[0.09] bg-white/[0.03] py-1 pl-1 pr-3 hover:border-white/30">' +
+          '<span class="flex h-7 w-7 items-center justify-center rounded-full bg-white/10 ' +
+            'text-[12px] font-semibold">' + esc(initial) + '</span>' +
+          '<span class="max-w-[150px] truncate text-[13px] text-dim">' + esc(email) + '</span>' +
+        '</button>' +
+        '<div data-user-pop hidden class="absolute right-0 top-11 z-50 w-[240px] rounded-xl ' +
+          'border border-white/[0.09] bg-[#0C0C0F] p-1.5 shadow-2xl">' +
+          '<div class="px-3 py-2.5 border-b border-white/[0.07]">' +
+            '<div class="text-[13px] text-ink truncate">' + esc(email) + '</div>' +
+            '<div class="lbl mt-1 text-[10px]">Signed in</div>' +
+          '</div>' +
+          '<button data-act="signout" class="mt-1 w-full rounded-lg px-3 py-2 text-left ' +
+            'text-[14px] text-dim hover:bg-white/[0.05] hover:text-ink">Sign out</button>' +
+        '</div>';
+    } else if (window.ForgeAuth && !window.ForgeAuth.enabled()) {
+      userBox.innerHTML = '<span class="rounded-full border border-white/[0.09] px-3 py-1.5 ' +
+        'text-[12px] text-mute" title="Set supabaseUrl and supabaseAnonKey in config.js">' +
+        'auth not configured</span>';
     }
   }
 
@@ -633,11 +687,11 @@
             '<div class="lbl mt-1.5 text-[12px]">Next audit</div>' +
           '</div>' +
           '<div class="w-px bg-line mx-2"></div>' +
-          statTile(st.runs_today, 'Runs today', '#F8FAFC', false) +
+          statTile(st.runs_today, 'Runs today', '#FFFFFF', false) +
           '<div class="w-px bg-line mx-2"></div>' +
           statTile(st.HIGH, 'High', '#EF4444', st.HIGH > 0) +
           statTile(st.MED, 'Med', '#F59E0B', false) +
-          statTile(st.LOW, 'Low', '#3B82F6', false) +
+          statTile(st.LOW, 'Low', '#60A5FA', false) +
           '<div class="ml-auto flex flex-col justify-center items-end gap-2 pl-6">' +
             '<div class="lbl text-[12px]">Route grades</div>' +
             '<div class="flex flex-wrap items-center justify-end gap-x-4 gap-y-2">' + gradeHtml + '</div>' +
@@ -674,21 +728,21 @@
 
     if (st === 'done') {
       box = 'border-ok/50 bg-surface';
-      glyph = '✓'; glyphColor = '#10B981';
+      glyph = '✓'; glyphColor = '#34D399';
       beneath = '<span class="font-mono text-[12px] text-dim">' + fmtMs(info.duration_ms) + '</span>';
     } else if (st === 'active') {
       box = 'bg-raise stage-active';
-      glyph = '◆'; glyphColor = '#3B82F6';
-      beneath = '<span class="font-mono text-[12px]" style="color:#3B82F6" data-tick="stage-dur">' +
+      glyph = '◆'; glyphColor = '#60A5FA';
+      beneath = '<span class="font-mono text-[12px]" style="color:#60A5FA" data-tick="stage-dur">' +
         fmtMs(info.duration_ms) + '</span>';
     } else if (st === 'skipped') {
       box = 'border-line bg-transparent opacity-40';
-      glyph = '⊘'; glyphColor = '#64748B';
+      glyph = '⊘'; glyphColor = '#5C5C64';
       labelCls = 'line-through';
       beneath = '<span class="text-[12px] text-mute">skipped</span>';
     } else {
       box = 'border-line bg-transparent';
-      glyph = '○'; glyphColor = '#64748B';
+      glyph = '○'; glyphColor = '#5C5C64';
       beneath = '<span class="text-[12px] text-mute">pending</span>';
     }
 
@@ -698,21 +752,21 @@
       : '';
 
     var border = st === 'active' ? 'border' : 'border';
-    var style = st === 'active' ? 'style="border-color:#3B82F6"' : '';
+    var style = st === 'active' ? 'style="border-color:#60A5FA"' : '';
 
     return '<div class="flex-1 min-w-0">' +
       '<div class="' + border + ' ' + box + ' px-2 py-3 text-center" ' + style + '>' +
         '<div class="flex items-center justify-center gap-1.5">' +
           '<span aria-hidden="true" class="text-[13px]" style="color:' + glyphColor + '">' + glyph + '</span>' +
           '<span class="lbl text-[12px] ' + labelCls + '" ' +
-            (st === 'done' || st === 'active' ? 'style="color:#F8FAFC"' : '') + '>' + name + '</span>' +
+            (st === 'done' || st === 'active' ? 'style="color:#FFFFFF"' : '') + '>' + name + '</span>' +
           attempts +
         '</div>' +
         '<div class="mt-1.5">' + beneath + '</div>' +
       '</div>' +
     '</div>' +
     (isLast ? '' : '<div class="w-5 h-px shrink-0 self-center" style="background:' +
-      (st === 'done' ? '#10B981' : st === 'skipped' ? '#1F2937' : '#1F2937') + '"></div>');
+      (st === 'done' ? '#34D399' : st === 'skipped' ? '#1F2937' : '#1F2937') + '"></div>');
   }
 
   function renderPipeline(run) {
@@ -739,7 +793,7 @@
       '</section>';
     }
 
-    var meta = CLASSES[run.classification] || { c: '#64748B', acts: run.should_act !== false, blurb: '' };
+    var meta = CLASSES[run.classification] || { c: '#5C5C64', acts: run.should_act !== false, blurb: '' };
     var conf = run.confidence != null ? Math.round(run.confidence * 100) : null;
 
     var right = '<div class="shrink-0 w-[190px] pl-8 border-l border-line">' +
@@ -825,7 +879,7 @@
             run.changeset.map(function (c) {
               var counts = (c.added != null || c.removed != null)
                 ? '<span class="font-mono text-[14px] shrink-0">' +
-                    '<span style="color:#10B981">+' + (c.added || 0) + '</span> ' +
+                    '<span style="color:#34D399">+' + (c.added || 0) + '</span> ' +
                     '<span style="color:#EF4444">−' + (c.removed || 0) + '</span></span>'
                 : (c.reason
                     ? '<span class="text-[14px] text-mute truncate max-w-[380px]">' + esc(c.reason) + '</span>'
@@ -848,9 +902,9 @@
         '<div class="mt-6">' +
           '<div class="lbl mb-3">Verification</div>' +
           '<div class="flex flex-wrap gap-3">' +
-            chip(testsLabel, testsOk ? '#10B981' : '#EF4444', testsOk ? '✓' : '✗', 'text-[15px] px-3 py-1.5') +
+            chip(testsLabel, testsOk ? '#34D399' : '#EF4444', testsOk ? '✓' : '✗', 'text-[15px] px-3 py-1.5') +
             chip('findings closed ' + v.closed + ' · introduced ' + v.introduced,
-              v.introduced > 0 ? '#EF4444' : '#10B981',
+              v.introduced > 0 ? '#EF4444' : '#34D399',
               v.introduced > 0 ? '✗' : '✓', 'text-[15px] px-3 py-1.5') +
           '</div>' +
           (v.evidence ? '<p class="mt-3 text-[15px] text-dim">' + esc(v.evidence) + '</p>' : '') +
@@ -1149,7 +1203,7 @@
         '<span class="lbl text-[12px] w-20 shrink-0 ' + (skipped ? 'line-through opacity-50' : '') + '">' + n + '</span>' +
         '<div class="flex-1 h-2.5 bg-bg border border-line">' +
           (skipped ? '' : '<div class="h-full" style="width:' + Math.max(pct, 0.6) + '%;background:' +
-            (st.status === 'done' ? '#10B981' : '#3B82F6') + '"></div>') +
+            (st.status === 'done' ? '#34D399' : '#60A5FA') + '"></div>') +
         '</div>' +
         '<span class="font-mono text-[13px] w-20 text-right ' + (skipped ? 'text-mute' : 'text-dim') + '">' +
           (skipped ? 'skipped' : fmtMs(st.duration_ms)) + '</span>' +
@@ -1177,7 +1231,7 @@
     }, {});
     var totalChips = Object.keys(totals).sort(function (a, b) { return totals[b] - totals[a]; })
       .map(function (k) {
-        var o = OUTCOMES[k] || { c: '#64748B', label: k };
+        var o = OUTCOMES[k] || { c: '#5C5C64', label: k };
         return chip(o.label + ' ' + totals[k], o.c, null, 'text-[14px]');
       }).join('');
 
@@ -1189,8 +1243,8 @@
 
     var rows = runs.map(function (r) {
       var open = !!S.expanded[r.run_id];
-      var o = OUTCOMES[r.outcome] || { c: '#3B82F6', label: r.outcome || 'in flight' };
-      var cls = CLASSES[r.classification] || { c: '#64748B' };
+      var o = OUTCOMES[r.outcome] || { c: '#60A5FA', label: r.outcome || 'in flight' };
+      var cls = CLASSES[r.classification] || { c: '#5C5C64' };
       return '<tr class="border-t border-line hover:bg-raise cursor-pointer" ' +
           'data-act="toggle-run" data-id="' + esc(r.run_id) + '">' +
           '<td class="px-4 py-3 font-mono text-[14px] text-dim whitespace-nowrap">' + rel(r.started_at) + '</td>' +
@@ -1295,10 +1349,10 @@
 
         '<div class="mt-6 flex items-end gap-7">' +
           '<div><div class="text-[26px] leading-none font-semibold tabular-nums" style="color:' +
-            (p.high > 0 ? '#EF4444' : '#64748B') + '">' + p.high + '</div>' +
+            (p.high > 0 ? '#EF4444' : '#5C5C64') + '">' + p.high + '</div>' +
             '<div class="lbl mt-1 text-[12px]">Open high</div></div>' +
           '<div><div class="text-[26px] leading-none font-semibold tabular-nums" style="color:' +
-            (p.med > 0 ? '#F59E0B' : '#64748B') + '">' + p.med + '</div>' +
+            (p.med > 0 ? '#F59E0B' : '#5C5C64') + '">' + p.med + '</div>' +
             '<div class="lbl mt-1 text-[12px]">Open med</div></div>' +
         '</div>' +
 
@@ -1502,12 +1556,19 @@
   }
 
   document.addEventListener('click', function (e) {
+    var pop = document.querySelector('[data-user-pop]');
+    if (pop && !pop.hidden && !e.target.closest('#user-menu')) pop.hidden = true;
     if (e.target.closest('a')) return;   // a link inside a clickable row stays a link
     var t = e.target.closest('[data-act]');
     if (!t) return;
     var act = t.getAttribute('data-act');
 
-    if (act === 'audit-now') { runAuditNow(); }
+    if (act === 'refresh') { refreshAll(); renderScreen(true); flashToast('Refreshed.'); }
+    else if (act === 'user-toggle') {
+      var pop = document.querySelector('[data-user-pop]');
+      if (pop) pop.hidden = !pop.hidden;
+    }
+    else if (act === 'audit-now') { runAuditNow(); }
     else if (act === 'goto-submit') { location.hash = '#submit'; }
     else if (act === 'signout') { window.ForgeAuth.signOut(); }
     else if (act === 'filter') {

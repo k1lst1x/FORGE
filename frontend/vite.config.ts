@@ -12,6 +12,7 @@ export default defineConfig({
     rollupOptions: {
       input: {
         main: "index.html",
+        dashboard: "dashboard.html",
         console: "console.html",
         app: "app.html",
       },

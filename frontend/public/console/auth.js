@@ -1,12 +1,14 @@
 /*
- * forge/console/auth.js — Supabase Auth, optional.
+ * frontend/public/console/auth.js — Supabase Auth for the dashboard.
  *
- * Fill supabaseUrl + supabaseAnonKey in config.js and the console gates on a
- * session and sends the access token on every API call. Leave them blank and
- * the console runs open and says so in the rail — a missing key is never what
- * stops a demo, but it is also never silently treated as "signed in".
+ * Real sessions, not a mock: signInWithPassword / signInWithOtp / signUp
+ * against Supabase, the JWT attached to every API call, and onAuthStateChange
+ * kept live so a sign-out in another tab closes this one too.
  *
- * Buildless on purpose: the UMD bundle on window.supabase, no import step.
+ * Set supabaseUrl + supabaseAnonKey in config.js and the dashboard gates on a
+ * session. Leave them blank and it runs open and says so — a missing key is
+ * never the thing that stops a demo, but it is also never silently treated as
+ * "signed in".
  */
 (function () {
   'use strict';
@@ -29,55 +31,59 @@
     });
   }
 
-  // ---------------------------------------------------------------- sign-in
+  // ─────────────────────────────────────────────────────────── sign-in view
   function renderSignIn(message, tone) {
     var host = document.getElementById('auth-screen');
     host.hidden = false;
     host.innerHTML =
-      '<div class="w-full max-w-[420px]">' +
-        '<div class="flex items-center gap-2.5 mb-8">' +
-          '<svg width="18" height="18" viewBox="0 0 18 18" fill="none" aria-hidden="true">' +
-            '<path d="M2 16V2h14L9.5 8.5H6v3h5L9 16H2z" fill="#FB923C"/></svg>' +
-          '<span class="text-[17px] font-bold tracking-[0.18em] text-ink">FORGE</span>' +
-          '<span class="lbl text-[11px] ml-1">console</span>' +
-        '</div>' +
+      '<div class="w-full max-w-[430px]">' +
 
-        '<div class="frame border border-line bg-surface p-7">' +
-          '<h1 class="text-[20px] font-semibold text-ink">Sign in</h1>' +
-          '<p class="mt-1.5 text-[15px] text-dim">This console controls a factory that writes and ships code. Access is restricted.</p>' +
+        '<a href="index.html" class="mb-9 flex items-center gap-2.5">' +
+          '<svg width="21" height="21" viewBox="0 0 22 22" fill="none" aria-hidden="true">' +
+            '<path d="M2.5 19.5V2.5h17L11.5 10.5H7v2.6h6.2L11 19.5H2.5z" fill="#fff"/></svg>' +
+          '<span class="text-[16px] font-semibold tracking-[0.20em] text-ink">FORGE</span>' +
+        '</a>' +
 
-          '<form id="auth-form" class="mt-6 space-y-4" novalidate>' +
+        '<div class="card-edge tickrow rounded-2xl p-8">' +
+          '<h1 class="text-[26px] font-medium leading-tight tracking-[-0.02em]">Sign in' +
+            '<span class="block silver">to the factory floor</span></h1>' +
+          '<p class="mt-3 text-[15px] leading-relaxed text-dim">' +
+            'This dashboard controls a factory that writes and ships code. Access is restricted.</p>' +
+
+          '<form id="auth-form" class="mt-7 space-y-4" novalidate>' +
             '<div>' +
-              '<label for="auth-email" class="lbl block mb-1.5">Email</label>' +
+              '<label for="auth-email" class="lbl mb-2 block">Email</label>' +
               '<input id="auth-email" type="email" autocomplete="email" required ' +
-                'class="w-full bg-bg border border-line px-3 py-2.5 text-[15px] text-ink font-mono ' +
-                'focus:border-info focus:outline-none">' +
+                'class="w-full rounded-lg border border-white/[0.10] bg-white/[0.03] px-3.5 py-3 ' +
+                'text-[15px] text-ink outline-none placeholder:text-mute focus:border-info">' +
             '</div>' +
             '<div>' +
-              '<label for="auth-password" class="lbl block mb-1.5">Password</label>' +
+              '<label for="auth-password" class="lbl mb-2 block">Password</label>' +
               '<input id="auth-password" type="password" autocomplete="current-password" ' +
-                'class="w-full bg-bg border border-line px-3 py-2.5 text-[15px] text-ink font-mono ' +
-                'focus:border-info focus:outline-none">' +
+                'class="w-full rounded-lg border border-white/[0.10] bg-white/[0.03] px-3.5 py-3 ' +
+                'text-[15px] text-ink outline-none placeholder:text-mute focus:border-info">' +
             '</div>' +
 
             '<div id="auth-msg" class="min-h-[22px] text-[14px] ' +
               (tone === 'ok' ? 'text-ok' : 'text-bad') + '">' + esc(message || '') + '</div>' +
 
             '<button type="submit" id="auth-submit" ' +
-              'class="w-full bg-ink text-bg font-semibold text-[15px] py-2.5 hover:bg-white ' +
-              'disabled:opacity-50 disabled:cursor-not-allowed">Sign in</button>' +
+              'class="w-full rounded-full bg-white py-3 text-[14px] font-semibold tracking-[0.04em] ' +
+              'text-black hover:bg-white/90 disabled:opacity-50">SIGN IN</button>' +
 
-            '<div class="flex items-center justify-between pt-1">' +
-              '<button type="button" id="auth-magic" class="text-[14px] text-dim hover:text-ink underline underline-offset-4">' +
-                'Email me a sign-in link</button>' +
-              '<button type="button" id="auth-signup" class="text-[14px] text-dim hover:text-ink underline underline-offset-4">' +
-                'Create account</button>' +
-            '</div>' +
+            '<button type="button" id="auth-magic" ' +
+              'class="pill-dark w-full rounded-full py-3 text-[13px] font-semibold tracking-[0.10em] text-ink">' +
+              'EMAIL ME A LINK</button>' +
           '</form>' +
+
+          '<div class="mt-6 border-t border-white/[0.07] pt-5 text-center text-[14px] text-dim">' +
+            'No account? <button id="auth-signup" class="text-ink underline underline-offset-4">Create one</button>' +
+          '</div>' +
         '</div>' +
 
-        '<p class="mt-4 text-[13px] text-mute">Authentication is Supabase. Configured in ' +
-          '<span class="font-mono">forge/console/config.js</span>.</p>' +
+        '<p class="mt-5 text-center text-[13px] text-mute">' +
+          'Authentication is Supabase. <a href="index.html" class="underline underline-offset-4 hover:text-dim">' +
+          'Back to the site</a></p>' +
       '</div>';
 
     var form = document.getElementById('auth-form');
@@ -90,22 +96,18 @@
       msgEl.textContent = text;
       msgEl.className = 'min-h-[22px] text-[14px] ' + (ok ? 'text-ok' : 'text-bad');
     }
-
     function busy(on, label) {
       submitEl.disabled = on;
-      submitEl.textContent = on ? label : 'Sign in';
+      submitEl.textContent = on ? label : 'SIGN IN';
     }
 
     form.addEventListener('submit', function (e) {
       e.preventDefault();
       if (!emailEl.value || !passEl.value) return say('Email and password are both required.');
-      busy(true, 'Signing in…');
+      busy(true, 'SIGNING IN…');
       client.auth.signInWithPassword({ email: emailEl.value.trim(), password: passEl.value })
-        .then(function (r) {
-          busy(false);
-          if (r.error) return say(r.error.message);
-        })
-        .catch(function (err) { busy(false); say(String(err && err.message || err)); });
+        .then(function (r) { busy(false); if (r.error) say(r.error.message); })
+        .catch(function (err) { busy(false); say(String((err && err.message) || err)); });
     });
 
     document.getElementById('auth-magic').addEventListener('click', function () {
@@ -116,7 +118,7 @@
           if (r.error) return say(r.error.message);
           say('Check your email for the sign-in link.', true);
         })
-        .catch(function (err) { say(String(err && err.message || err)); });
+        .catch(function (err) { say(String((err && err.message) || err)); });
     });
 
     document.getElementById('auth-signup').addEventListener('click', function () {
@@ -125,9 +127,9 @@
       client.auth.signUp({ email: emailEl.value.trim(), password: passEl.value })
         .then(function (r) {
           if (r.error) return say(r.error.message);
-          say(r.data && r.data.session ? 'Signed in.' : 'Account created. Confirm your email, then sign in.', true);
+          say(r.data && r.data.session ? 'Signed in.' : 'Account created — confirm your email, then sign in.', true);
         })
-        .catch(function (err) { say(String(err && err.message || err)); });
+        .catch(function (err) { say(String((err && err.message) || err)); });
     });
 
     emailEl.focus();
@@ -139,11 +141,11 @@
     host.innerHTML = '';
   }
 
-  // -------------------------------------------------------------------- api
+  // ──────────────────────────────────────────────────────────────────── api
   /**
-   * Resolves once the console is allowed to render: either auth is off, or
-   * there is a live session. Never rejects — a broken auth config degrades to
-   * open mode with a visible warning rather than a blank screen.
+   * Resolves once the dashboard may render: either auth is off, or a session
+   * exists. Never rejects — a broken auth config degrades to open mode with a
+   * visible warning rather than a blank screen.
    */
   function init() {
     return new Promise(function (resolve) {
@@ -153,19 +155,20 @@
       }
       if (!window.supabase || !window.supabase.createClient) {
         enabled = false;
-        console.warn('[forge] supabase-js did not load; console is running open.');
+        console.warn('[forge] supabase-js did not load; dashboard is running open.');
         return resolve({ enabled: false, reason: 'sdk-unavailable' });
       }
-
       try {
         client = window.supabase.createClient(CFG.supabaseUrl, CFG.supabaseAnonKey);
       } catch (err) {
         enabled = false;
-        console.warn('[forge] supabase client failed to build; console is running open.', err);
+        console.warn('[forge] supabase client failed to build; running open.', err);
         return resolve({ enabled: false, reason: 'client-error' });
       }
       enabled = true;
 
+      // Live: a sign-out in another tab closes this one, a magic-link return
+      // lands straight in the dashboard without a reload.
       client.auth.onAuthStateChange(function (_event, s) {
         session = s;
         listeners.forEach(function (cb) { try { cb(s); } catch (e) { /* keep going */ } });
@@ -177,7 +180,7 @@
         if (session) { hideSignIn(); resolve({ enabled: true, session: session, user: session.user }); }
         else renderSignIn('');
       }).catch(function () {
-        renderSignIn('Could not reach Supabase. Check the URL in config.js.');
+        renderSignIn('Could not reach Supabase. Check supabaseUrl in config.js.');
       });
     });
   }
