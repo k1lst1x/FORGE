@@ -25,6 +25,7 @@ from forge import approvals, config, scheduler, store
 from forge.intake import router as intake_router
 from forge.status import router as status_router
 
+
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)-7s %(name)s: %(message)s")
 log = logging.getLogger("forge.api")
 
@@ -117,6 +118,36 @@ def health():
 @app.get("/api/runs")
 def runs(limit: int = 50):
     return {"runs": store.list_runs(limit)}
+
+
+#: A run is finished once it reaches the closing audit or lands a final status.
+TERMINAL_STAGES = {"AUDIT"}
+TERMINAL_STATUSES = {"done", "failed", "escalated", "rejected"}
+
+
+def _is_terminal(run: dict) -> bool:
+    return (run.get("stage") in TERMINAL_STAGES) or (run.get("status") in TERMINAL_STATUSES)
+
+
+@app.get("/api/runs/current")
+def current_run():
+    """The run in flight, or an explicit null. ALWAYS 200 -- never 404.
+
+    Declared above /api/runs/{run_id} on purpose: FastAPI matches in
+    declaration order, so the parameterised route would otherwise swallow
+    "current" as a run_id and 404.
+
+    200-with-null rather than 404 because a client cannot tell a 404 meaning
+    "nothing is happening" from a failed fetch meaning "the backend is down".
+    The console fell back to demo data on both, so an idle factory rendered
+    identically to a dead one. An idle factory now says it is idle.
+
+    Reads the same store /api/runs does; adds no state of its own.
+    """
+    for run in store.list_runs(50):
+        if not _is_terminal(run):
+            return {"run": run}
+    return {"run": None}
 
 
 @app.get("/api/runs/{run_id}")

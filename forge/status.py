@@ -12,9 +12,12 @@ goes wrong.
 """
 from __future__ import annotations
 
-from fastapi import APIRouter
+import json
+import os
 
-from forge import llm
+from fastapi import APIRouter, HTTPException, Response
+
+from forge import config, llm
 
 router = APIRouter()
 
@@ -90,3 +93,66 @@ def findings() -> dict:
         "open_count": len(open_rows),
         "suppressed_count": len([r for r in rows if r.get("status") == "suppressed"]),
     }
+
+
+# --------------------------------------------------------------------------
+# the operator console
+# --------------------------------------------------------------------------
+CONSOLE_DIR = config.REPO_ROOT / "forge" / "console"
+
+#: The one place the console's API base is configured. Empty means same origin,
+#: which is correct when forge-control serves the console itself.
+CONSOLE_API_BASE = os.getenv("FORGE_CONSOLE_API_BASE", "")
+
+_CONTENT_TYPES = {
+    ".html": "text/html; charset=utf-8",
+    ".js": "text/javascript; charset=utf-8",
+    ".css": "text/css; charset=utf-8",
+    ".json": "application/json",
+    ".svg": "image/svg+xml",
+    ".ico": "image/x-icon",
+    ".png": "image/png",
+    ".webmanifest": "application/manifest+json",
+}
+
+
+def _console_file(relative: str) -> Response:
+    """Serve a file from forge/console, and nothing outside it.
+
+    Served through a router rather than app.mount so that forge/api.py needs
+    exactly one new endpoint and no other change.
+    """
+    target = (CONSOLE_DIR / relative).resolve()
+    try:
+        target.relative_to(CONSOLE_DIR.resolve())
+    except ValueError:
+        raise HTTPException(status_code=404, detail="not found")
+    if not target.is_file():
+        raise HTTPException(status_code=404, detail=f"{relative} is not in forge/console")
+
+    body = target.read_bytes()
+
+    # config.js is the console's single configuration point. The API base is
+    # appended from one env var so a demo machine can point the console at a
+    # forge-control elsewhere without editing a checked-in file.
+    if relative == "config.js" and CONSOLE_API_BASE:
+        body += (
+            "\n// injected by forge-control from FORGE_CONSOLE_API_BASE\n"
+            f'window.FORGE_CONFIG.apiBase = {json.dumps(CONSOLE_API_BASE)};\n'
+        ).encode("utf-8")
+
+    return Response(
+        content=body,
+        media_type=_CONTENT_TYPES.get(target.suffix, "application/octet-stream"),
+        headers={"Cache-Control": "no-store"},
+    )
+
+
+@router.get("/console")
+def console_index() -> Response:
+    return _console_file("index.html")
+
+
+@router.get("/console/{path:path}")
+def console_asset(path: str) -> Response:
+    return _console_file(path or "index.html")

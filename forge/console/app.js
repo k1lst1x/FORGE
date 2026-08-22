@@ -90,6 +90,10 @@
     expanded: {},          // row id -> true
     filters: { severity: 'all', route: 'all', status: 'all' },
     countdown: null,       // seconds, ticked locally between status polls
+    lastGood: null,        // ms epoch of the last poll that actually answered
+    lastError: null,       // what failed, so the disconnected state can say so
+    approvals: [],         // pending human decisions from /api/approvals
+    deciding: null,        // approval_id currently being submitted
     runStart: null,        // ms epoch, for the elapsed clock
     toast: null,
     composer: null,
@@ -401,10 +405,12 @@
       S.online = true;
       renderStatusBar();
       renderRail();
-    }).catch(function () {
-      if (!S.loaded.status && !QS.has('nodemo')) enterDemo();
-      else if (S.demo) applyDemoStatus();
-      else markOnline(false);
+    }).catch(function (err) {
+      if (S.demo) { applyDemoStatus(); return; }
+      markOnline(false, err && err.message ? err.message : String(err));
+      renderStatusBar();
+      renderRail();
+      if (S.screen === 'live') renderScreen();
     });
   }
 
@@ -451,11 +457,20 @@
     request('findings', '/api/findings').then(function (payload) {
       if (payload === undefined) return;
       var rows = unwrap(payload, 'findings') || [];
-      S.findings = (Array.isArray(rows) ? rows : []).map(normFinding);
+      S.findingsRaw = Array.isArray(rows) ? rows : [];
+      S.findings = S.findingsRaw.map(normFinding);
       S.loaded.findings = true;
+
+      // /api/findings also carries when the audit last ran and the totals, so
+      // the status bar can show a real "last audit" age. /api/status has no
+      // timing field -- adapting rather than inventing one.
+      if (payload && payload.audited_at != null && S.status) {
+        S.status.audited_at = payload.audited_at * 1000;
+      }
       markOnline(true);
+      pollCatalog();
       if (S.screen === 'findings') renderScreen();
-    }).catch(function () { markOnline(false); });
+    }).catch(function (err) { markOnline(false, err && err.message); });
   }
 
   function pollRuns() {
@@ -482,28 +497,109 @@
       if (S.screen === 'catalog') renderScreen();
       return;
     }
-    request('catalog', '/api/catalog').then(function (payload) {
-      if (payload === undefined) return;
-      var rows = unwrap(payload, 'pages') || unwrap(payload, 'catalog') || [];
-      S.catalog = (Array.isArray(rows) ? rows : []).map(normCatalog);
-      S.loaded.catalog = true;
-      markOnline(true);
-      if (S.screen === 'catalog') renderScreen();
-    }).catch(function () { markOnline(false); });
+    // There is no /api/catalog. The per-page grades are derived from the
+    // findings catalog the audit already publishes: bronze if any open HIGH,
+    // silver if any open MED, otherwise gold -- the same rule forge/models.py
+    // applies server-side.
+    S.catalog = deriveCatalog(S.findingsRaw || []);
+    S.loaded.catalog = S.loaded.findings;
+    if (S.screen === 'catalog') renderScreen();
   }
 
-  function markOnline(ok) {
+  function deriveCatalog(rows) {
+    var byRoute = {};
+    (rows || []).forEach(function (f) {
+      var route = f.route || '/';
+      var bucket = byRoute[route] || (byRoute[route] = {
+        route: route, HIGH: 0, MED: 0, LOW: 0, open: 0, suppressed: 0, last_audited: null,
+      });
+      var status = (f.status || 'open').toLowerCase();
+      if (status === 'suppressed') { bucket.suppressed++; return; }
+      if (status !== 'open') return;
+      var sev = (f.severity || 'LOW').toUpperCase();
+      if (bucket[sev] != null) bucket[sev]++;
+      bucket.open++;
+    });
+    return Object.keys(byRoute).sort().map(function (route) {
+      var b = byRoute[route];
+      var grade = b.HIGH > 0 ? 'bronze' : (b.MED > 0 ? 'silver' : 'gold');
+      return normCatalog({
+        route: route,
+        grade: grade,
+        open_findings_high: b.HIGH,
+        open_findings_med: b.MED,
+        open_findings_low: b.LOW,
+        open_findings: b.open,
+        suppressed: b.suppressed,
+        last_audited: S.status && S.status.audited_at ? S.status.audited_at : null,
+      });
+    });
+  }
+
+  // Liveness is measured from the last poll that actually answered, not from a
+  // boolean, so a console left open overnight cannot show a confident green
+  // next to numbers from an hour ago.
+  var LIVE_MS = 5000;     // under this: green LIVE
+  var STALE_MS = 12000;   // beyond this the amber pill pulses
+  var DEAD_MS = 30000;    // beyond this: red DISCONNECTED
+
+  function pollApprovals() {
+    if (S.demo) {
+      S.approvals = [];
+      return;
+    }
+    request('approvals', '/api/approvals').then(function (payload) {
+      if (payload === undefined) return;
+      var rows = unwrap(payload, 'pending') || [];
+      S.approvals = Array.isArray(rows) ? rows : [];
+      markOnline(true);
+      if (S.screen === 'live') renderScreen();
+    }).catch(function (err) { markOnline(false, err && err.message); });
+  }
+
+  /** The pending decision for a run, if the factory is waiting on one. */
+  function approvalFor(run) {
+    if (!run || !S.approvals) return null;
+    for (var i = 0; i < S.approvals.length; i++) {
+      if (S.approvals[i].run_id === run.run_id) return S.approvals[i];
+    }
+    return null;
+  }
+
+  function markOnline(ok, err) {
+    if (ok) { S.lastGood = Date.now(); S.lastError = null; }
+    else if (err) { S.lastError = err; }
     if (S.online === ok) return;
     S.online = ok;
     renderStatusBar();
     renderRail();
   }
 
+  function linkAge() {
+    return S.lastGood == null ? Infinity : Date.now() - S.lastGood;
+  }
+
+  /** 'demo' | 'connecting' | 'live' | 'stale' | 'disconnected' */
+  function linkState() {
+    if (S.demo) return 'demo';
+    if (S.lastGood == null) return S.lastError ? 'disconnected' : 'connecting';
+    var age = linkAge();
+    if (age < LIVE_MS) return 'live';
+    if (age < DEAD_MS) return 'stale';
+    return 'disconnected';
+  }
+
+  function apiUrlFor(path) {
+    return (API || location.origin) + path;
+  }
+
+  // Demo data is entered ONLY on ?demo=1, never as a fallback. Fabricated
+  // numbers rendered because a fetch failed are worse than an error: they look
+  // exactly like a working factory, and nobody watching can tell.
   function enterDemo() {
+    if (!QS.has('demo')) return;
     if (S.demo) return;
     S.demo = true;
-    console.warn('[forge] forge-control is not reachable at "' + (API || location.origin) +
-      '". Serving the offline dataset; the status bar says so.');
     applyDemoStatus();
     pollCurrent(); pollFindings(); pollRuns(); pollCatalog();
   }
@@ -513,6 +609,7 @@
     pollCurrent();
     pollFindings();
     pollRuns();
+    pollApprovals();
     pollCatalog();
   }
 
@@ -549,9 +646,12 @@
 
   /** Cheap enough to run on every poll: writes into nodes, never replaces them. */
   function renderRailHealth() {
+    var link = linkState();
     var healthy = S.status && S.status.scheduler === 'healthy';
-    var c = !S.online ? '#F59E0B' : healthy ? '#10B981' : '#EF4444';
-    var text = !S.online ? 'reconnecting' : healthy ? 'scheduler ok' : (S.status ? 'scheduler down' : 'connecting');
+    var c = LINK_PILL[link] ? LINK_PILL[link].color : '#EF4444';
+    var text = link === 'live' ? (healthy ? 'scheduler ok' : 'scheduler down')
+      : link === 'demo' ? 'demo data' : LINK_PILL[link].label.toLowerCase();
+    if (link === 'live' && healthy) c = '#10B981';
     var dot = document.querySelector('[data-health-dot]');
     var label = document.querySelector('[data-health-text]');
     if (dot) {
@@ -584,7 +684,76 @@
     '</div>';
   }
 
+  var LINK_PILL = {
+    live:         { color: '#10B981', label: 'LIVE' },
+    stale:        { color: '#F59E0B', label: 'STALE' },
+    disconnected: { color: '#EF4444', label: 'DISCONNECTED' },
+    connecting:   { color: '#F59E0B', label: 'CONNECTING' },
+    demo:         { color: '#F59E0B', label: 'DEMO DATA' },
+  };
+
+  // Demo mode has to be unmistakable in any single frame of a recording: a
+  // full-viewport watermark and a full-width bar, both permanent while it is on.
+  function renderDemoChrome() {
+    var existing = document.getElementById('forge-demo-chrome');
+    if (!S.demo) { if (existing) existing.remove(); return; }
+    if (existing) return;
+    var el = document.createElement('div');
+    el.id = 'forge-demo-chrome';
+    el.innerHTML =
+      '<div style="position:fixed;inset:0;z-index:60;pointer-events:none;display:flex;' +
+      'align-items:center;justify-content:center;overflow:hidden">' +
+        '<div style="transform:rotate(-30deg);white-space:nowrap;opacity:0.08;color:#F59E0B;' +
+        'font-weight:900;font-size:clamp(60px,14vw,240px);letter-spacing:0.06em;' +
+        'font-family:ui-sans-serif,system-ui,sans-serif">DEMO DATA · DEMO DATA</div>' +
+      '</div>' +
+      '<div style="position:fixed;top:0;left:0;right:0;z-index:61;pointer-events:none;' +
+      'background:#F59E0B;color:#101010;font-weight:800;letter-spacing:0.1em;' +
+      'font-size:14px;text-align:center;padding:7px 0">' +
+        'DEMO DATA — NOT A LIVE FACTORY. Nothing on this screen came from forge-control.' +
+      '</div>';
+    document.body.appendChild(el);
+    document.body.style.paddingTop = '30px';
+  }
+
+  /** Shown instead of content when the backend cannot be reached at all. */
+  function renderDisconnected() {
+    return '<section class="border p-10" style="border-color:' + tint('#EF4444', 0.45) +
+      ';background:' + tint('#EF4444', 0.06) + '">' +
+      '<div class="flex items-center gap-3">' +
+        '<span class="w-2.5 h-2.5 rounded-full dot-live" style="background:#EF4444"></span>' +
+        '<span class="lbl text-[12px]" style="color:#EF4444">Disconnected</span>' +
+      '</div>' +
+      '<h2 class="mt-3 text-[30px] font-semibold text-ink">Cannot reach forge-control</h2>' +
+      '<p class="mt-3 text-[16px] text-dim max-w-[720px] leading-relaxed">' +
+        'The console asked <span class="font-mono text-ink">' + esc(apiUrlFor('/api/status')) + '</span>' +
+        ' and got no usable answer' +
+        (S.lastError ? ' (<span class="font-mono">' + esc(S.lastError) + '</span>)' : '') + '.' +
+        ' No numbers are shown because there are none to show — this screen will not invent them.' +
+      '</p>' +
+      '<p class="mt-4 text-[15px] text-mute">Start it with <span class="font-mono text-dim">python -m forge.api</span>' +
+        ', or append <span class="font-mono text-dim">?demo=1</span> to browse the offline dataset.</p>' +
+      '</section>';
+  }
+
+  function renderLinkPill() {
+    var state = linkState();
+    var spec = LINK_PILL[state];
+    var age = linkAge();
+    var detail = '';
+    if (state === 'stale') detail = ' · ' + Math.round(age / 1000) + 's since last update';
+    if (state === 'disconnected') detail = ' · ' + apiUrlFor('/api/status') + ' is not answering';
+    if (state === 'demo') detail = ' · nothing here is real';
+    return '<span class="inline-flex items-center gap-2 border px-3 py-1 text-[14px] font-semibold" ' +
+      'style="color:' + spec.color + ';border-color:' + tint(spec.color, 0.5) +
+      ';background:' + tint(spec.color, 0.09) + '">' +
+      '<span class="w-1.5 h-1.5 rounded-full' + (state === 'live' || age > STALE_MS ? ' dot-live' : '') +
+      '" style="background:' + spec.color + '"></span>' +
+      spec.label + '<span class="font-normal opacity-80">' + esc(detail) + '</span></span>';
+  }
+
   function renderStatusBar() {
+    renderDemoChrome();
     var host = document.getElementById('statusbar');
     if (!S.loaded.status) {
       if (S.sigs.bar === 'sk') return;
@@ -597,18 +766,12 @@
     var st = S.status;
 
     // Deliberately excludes the countdown: it ticks by textContent, below.
-    var barSig = [st.runs_today, st.HIGH, st.MED, st.LOW, S.online, S.demo,
+    var barSig = [st.runs_today, st.HIGH, st.MED, st.LOW, S.online, S.demo, linkState(),
       JSON.stringify(st.grades)].join('|');
     if (S.sigs.bar === barSig) return;
     S.sigs.bar = barSig;
 
-    var pills = '';
-    if (!S.online) {
-      pills += '<span class="inline-flex items-center gap-2 border px-3 py-1 text-[14px]" ' +
-        'style="color:#F59E0B;border-color:' + tint('#F59E0B', 0.5) + ';background:' + tint('#F59E0B', 0.09) + '">' +
-        '<span class="w-1.5 h-1.5 rounded-full dot-live" style="background:#F59E0B"></span>' +
-        'reconnecting — showing last known state</span>';
-    }
+    var pills = renderLinkPill();
     if (S.demo) {
       pills += '<span class="inline-flex items-center gap-2 border px-3 py-1 text-[14px] ml-2" ' +
         'style="color:#F59E0B;border-color:' + tint('#F59E0B', 0.5) + ';background:' + tint('#F59E0B', 0.09) + '">' +
@@ -873,6 +1036,70 @@
       '<div class="lbl mb-4">Evidence</div>' + blocks.join('') + '</section>';
   }
 
+  function renderVerifyEvidence(run) {
+    var a = approvalFor(run);
+    var v = (a && a.verify) || (run && run.verify) || {};
+    if (!a && !v.evidence) return '';
+    var files = (a && a.files_changed) || run.files_changed || [];
+    var bits = [];
+    if (v.tests_passed != null) bits.push('tests ' + (v.tests_passed ? 'passed' : 'FAILED'));
+    if (v.findings_closed) bits.push((v.findings_closed.length || 0) + ' finding(s) closed');
+    if (v.findings_introduced) bits.push((v.findings_introduced.length || 0) + ' introduced');
+    return '<div class="mt-4 text-[14px] text-dim font-mono">' +
+      (files.length ? esc(files.join('  ·  ')) + '<br>' : '') +
+      (bits.length ? esc(bits.join('  ·  ')) : '') +
+      '</div>';
+  }
+
+  function renderDecisionButtons(run) {
+    var a = approvalFor(run);
+    if (!a) return '';
+    var busy = S.deciding === a.approval_id;
+    var base = 'inline-flex items-center justify-center font-semibold text-[16px] px-7 py-3.5 ';
+    return (
+      '<button data-approve="' + esc(a.approval_id) + '"' + (busy ? ' disabled' : '') + ' class="' + base +
+        'bg-ink text-bg hover:bg-white disabled:opacity-40">' + (busy ? 'submitting…' : 'Approve') + '</button>' +
+      '<button data-reject="' + esc(a.approval_id) + '"' + (busy ? ' disabled' : '') + ' class="' + base +
+        'border" style="border-color:' + tint('#EF4444', 0.5) + ';color:#EF4444">' + 'Reject' + '</button>'
+    );
+  }
+
+  /** The operator's name, asked once and kept. It is sent as who= on every decision. */
+  function operator() {
+    var name = null;
+    try { name = localStorage.getItem('forge.operator'); } catch (e) {}
+    if (!name) {
+      name = (window.prompt('Your name, for the approval record:') || '').trim();
+      if (!name) return null;
+      try { localStorage.setItem('forge.operator', name); } catch (e) {}
+    }
+    return name;
+  }
+
+  function decide(approvalId, approved) {
+    var who = operator();
+    if (!who) { showToast('A name is required on the approval record.', 'warn'); return; }
+    S.deciding = approvalId;
+    renderScreen();
+    var verb = approved ? 'approve' : 'reject';
+    request('decide', '/api/approvals/' + encodeURIComponent(approvalId) + '/' + verb +
+            '?who=' + encodeURIComponent(who), { method: 'POST' })
+      .then(function (res) {
+        S.deciding = null;
+        if (res === undefined) return;
+        showToast(approved ? 'Approved — merging.' : 'Rejected — the finding stays open.',
+                  approved ? 'ok' : 'warn');
+        // Refetch at once so the pipeline advances on screen rather than
+        // waiting out the poll interval.
+        pollApprovals(); pollCurrent(); pollRuns(); pollFindings();
+      })
+      .catch(function (err) {
+        S.deciding = null;
+        showToast('The decision did not reach forge-control: ' + (err && err.message ? err.message : err), 'bad');
+        renderScreen();
+      });
+  }
+
   function renderGate(run) {
     var stages = deriveStages(run);
     if (!stages.GATE || stages.GATE.status !== 'active') return '';
@@ -886,18 +1113,22 @@
           '<h2 class="mt-2 text-[28px] font-semibold text-ink">Waiting for human approval</h2>' +
           '<p class="mt-2 text-[16px] text-dim max-w-[640px] leading-relaxed">' +
             'The change is written, tested and re-audited. Nothing merges until a human approves it. ' +
-            '<span class="text-ink">Approval happens in Port, not in this console</span> — this screen ' +
-            'watches the decision, it does not make it.' +
+            (approvalFor(run)
+              ? '<span class="text-ink">This decision is yours to make.</span> Approving merges the branch; ' +
+                'rejecting closes the run and leaves the finding open.'
+              : 'Waiting for the factory to register the approval request.') +
           '</p>' +
+          renderVerifyEvidence(run) +
           (run.pr_url
             ? '<div class="mt-4 font-mono text-[14px] text-dim">' + link(run.pr_url, run.pr_url,
                 'text-dim hover:text-ink underline underline-offset-4 break-all') + '</div>'
             : '') +
         '</div>' +
         '<div class="flex flex-col gap-3">' +
+          renderDecisionButtons(run) +
           link(portUrl('Approval', run.approval_id) || portUrl('Run', run.run_id),
-            'Review in Port ↗',
-            'inline-flex items-center justify-center bg-ink text-bg font-semibold text-[16px] px-7 py-3.5 hover:bg-white') +
+            'Also approvable in Port ↗',
+            'inline-flex items-center justify-center text-[14px] px-7 py-2 text-dim hover:text-ink underline underline-offset-4') +
           link(run.pr_url, 'Open pull request ↗',
             'inline-flex items-center justify-center border border-line text-[15px] px-7 py-2.5 text-dim hover:text-ink hover:border-dim') +
         '</div>' +
@@ -905,17 +1136,38 @@
     '</section>';
   }
 
+  /** What to say under "No active run".
+
+      /api/status carries spend and provider, not audit timing, so there is no
+      countdown to read. Rather than invent one, this reports the fact that IS
+      published: when the last audit finished, from /api/findings.audited_at.
+      If forge-control ever publishes next_audit_seconds, the countdown is used. */
+  function idleDetail() {
+    if (S.countdown != null) {
+      return 'The factory is idle. The scheduler opens the next audit in ' +
+        '<span class="font-mono text-ink" data-tick="countdown">' + mmss(S.countdown) + '</span>, ' +
+        'or you can start one now.';
+    }
+    var at = S.status && S.status.audited_at;
+    if (at) {
+      var ago = Math.max(0, Math.round((Date.now() - at) / 1000));
+      return 'The factory is idle. The last audit finished ' +
+        '<span class="font-mono text-ink">' + ago + 's</span> ago and the scheduler runs on its own ' +
+        'interval — or you can start one now.';
+    }
+    return 'The factory is idle. No audit has been reported yet; you can start one now.';
+  }
+
   function renderLive() {
+    // An idle factory and an unreachable one are different facts and must never
+    // render the same. Disconnected wins; idle is only claimed once the API has
+    // actually answered.
+    if (linkState() === 'disconnected') return renderDisconnected();
     if (!S.loaded.run) return skeleton(4);
 
     var run = S.run;
     if (!run) {
-      return emptyState(
-        'No active run',
-        'The factory is idle. The scheduler opens the next audit in ' +
-          '<span class="font-mono text-ink" data-tick="countdown">' + mmss(S.countdown) + '</span>, ' +
-          'or you can start one now.',
-        'Run audit now', 'audit-now');
+      return emptyState('No active run', idleDetail(), 'Run audit now', 'audit-now');
     }
 
     var elapsed = S.runStart ? (Date.now() - S.runStart) : null;
@@ -1412,7 +1664,9 @@
     S.composer.setBusy(true, 'submitting…');
     briefMessage('Submitting to Port…', 'busy');
 
-    request('brief', '/api/brief', { method: 'POST', body: payload })
+    // forge-control exposes POST /intake/brief -- the same front door a finding
+    // uses -- and answers {accepted, run_id, intake, message}.
+    request('brief', '/intake/brief', { method: 'POST', body: payload })
       .then(function (res) {
         S.composer.setBusy(false);
         if (res === undefined) { briefMessage('A submission is already in flight.', 'busy'); return; }
@@ -1482,11 +1736,29 @@
       return;
     }
     request('audit', '/audit/run', { method: 'POST', body: {} })
-      .then(function () { flashToast('Audit requested.'); pollStatus(); pollCurrent(); })
-      .catch(function (err) { flashToast('Could not start an audit: ' + friendlyError(err)); });
+      .then(function (res) {
+        if (res === undefined) return;
+        // forge-control answers 200 with {skipped:true, reason:'overlap'} when an
+        // audit is already running. That is neither a failure nor a new run, and
+        // reporting it as either would be a lie in both directions.
+        if (res && res.skipped) {
+          showToast('Audit already in progress', 'warn');
+          return;
+        }
+        var high = res && res.high != null ? ' — ' + res.high + ' HIGH' : '';
+        showToast('Audit complete' + high + '.', 'ok');
+        pollStatus(); pollCurrent(); pollFindings(); pollRuns();
+      })
+      .catch(function (err) { showToast('Could not start an audit: ' + friendlyError(err), 'bad'); });
   }
 
-  function flashToast(text) {
+  var TOAST_TONES = {
+    ok: { color: '#22C55E' }, warn: { color: '#F59E0B' }, bad: { color: '#EF4444' }, info: null,
+  };
+
+  function showToast(text, tone) { flashToast(text, tone); }
+
+  function flashToast(text, tone) {
     if (S.toast) clearTimeout(S.toast);
     var el = document.getElementById('forge-toast');
     if (!el) {
@@ -1496,6 +1768,9 @@
         'px-5 py-3 text-[15px] text-ink shadow-lg';
       document.body.appendChild(el);
     }
+    var spec = TOAST_TONES[tone || 'info'];
+    el.style.borderColor = spec ? spec.color : '';
+    el.style.color = spec ? spec.color : '';
     el.textContent = text;
     el.hidden = false;
     S.toast = setTimeout(function () { el.hidden = true; }, 4000);
@@ -1503,6 +1778,12 @@
 
   document.addEventListener('click', function (e) {
     if (e.target.closest('a')) return;   // a link inside a clickable row stays a link
+
+    var approve = e.target.closest('[data-approve]');
+    if (approve) { decide(approve.getAttribute('data-approve'), true); return; }
+    var reject = e.target.closest('[data-reject]');
+    if (reject) { decide(reject.getAttribute('data-reject'), false); return; }
+
     var t = e.target.closest('[data-act]');
     if (!t) return;
     var act = t.getAttribute('data-act');
@@ -1576,11 +1857,21 @@
     setInterval(function () { if (S.demo) S.status = normStatus(window.FORGE_DEMO.status()); pollStatus(); },
       CFG.pollStatusMs || 3000);
     setInterval(pollFindings, CFG.pollFindingsMs || 5000);
+    setInterval(pollApprovals, CFG.pollApprovalsMs || 2000);
     setInterval(function () { if (S.screen === 'runs') pollRuns(); }, CFG.pollRunsMs || 5000);
     setInterval(function () { if (S.screen === 'catalog') pollCatalog(); }, CFG.pollCatalogMs || 10000);
 
+    var lastLink = null;
     setInterval(function () {
       if (S.countdown != null && S.countdown > 0) S.countdown -= 1;
+      var link = linkState();
+      if (link !== lastLink) {
+        lastLink = link;
+        S.sigs.bar = null;          // force the pill to repaint on decay
+        renderStatusBar();
+        renderRail();
+        if (S.screen === 'live') renderScreen();
+      }
       tick();
     }, 1000);
   }
