@@ -43,7 +43,7 @@ WATCHER_PATH = Path(os.getenv("FORGE_BOOKS_WATCHER", str(REPO / "watchers" / "bo
 #: which then aged the feed past D1 -- a finding our own ceiling created. The
 #: scrape is off the demo path (it runs in its own task, see forge/scheduler.py),
 #: so a long ceiling costs nothing anyone is waiting on.
-HARD_TIMEOUT_SECONDS = int(os.getenv("FORGE_SCRAPE_TIMEOUT", "120"))
+HARD_TIMEOUT_SECONDS = int(os.getenv("FORGE_SCRAPE_TIMEOUT", "600"))
 
 NPX = "npx"
 CLI_ARGS = ["-y", "-p", "@brightdata/cli", "bdata"]

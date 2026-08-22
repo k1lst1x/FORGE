@@ -211,6 +211,37 @@ def _prior_attempts(cr: ChangeRequest) -> list[dict]:
     return history
 
 
+def _family_context(finding: dict) -> tuple[str | None, list[dict]]:
+    """Every open finding that shares this one's fix, on this one's route.
+
+    S1-S6 are six findings and ONE security-headers middleware. Planned one at a
+    time the run cannot converge: close S1 and the fresh audit still reports
+    S2-S6 on that route, so VERIFY rejects, and the retry meets the same five.
+    The whole set goes to the planner together and VERIFY expects the whole set
+    closed -- see the `family` key in policy/audit_policy.yaml.
+
+    Returns (None, []) for a finding that stands alone, which is most of them.
+    """
+    finding = finding or {}
+    route, check_id = finding.get("route"), finding.get("check_id")
+    family = finding.get("family") or _safe(audit_mod.family_of, check_id)
+    if not family:
+        return None, []
+
+    members = set(_safe(audit_mod.family_members, family) or [])
+    siblings: dict = {}
+    for row in _safe(store.open_findings, route) or []:
+        if row.get("check_id") in members and row.get("route") == route:
+            siblings[row.get("finding_id")] = row
+    # The finding that opened this run is always in the set, whether or not the
+    # catalog has caught up with it yet.
+    siblings[finding.get("finding_id")] = finding
+    ordered = sorted(siblings.values(), key=lambda f: str(f.get("check_id")))
+    log.info("finding %s belongs to family %s -- %s open on %s",
+             check_id, family, len(ordered), route)
+    return family, ordered
+
+
 def _affected_routes(cr: ChangeRequest) -> list[str]:
     """Which routes the closing audit checks.
 
@@ -271,6 +302,16 @@ def _pr_body(cr: ChangeRequest) -> str:
         "- findings introduced: " + str(cr.verify.get("findings_introduced")),
         "- evidence: " + str(cr.verify.get("evidence")),
         "",
+    ]
+    if len(cr.verify_attempts) > 1:
+        lines += ["### Earlier attempts", ""]
+        for entry in cr.verify_attempts[:-1]:
+            lines.append(
+                "- attempt " + str(entry.get("attempt")) + ": rejected -- "
+                + str(entry.get("rejected_reason") or "see the run record")
+            )
+        lines.append("")
+    lines += [
         "## Run",
         "",
         "- run_id: " + cr.run_id,
@@ -313,6 +354,9 @@ def context(cr: ChangeRequest, span) -> ChangeRequest:
         cr.context["file_contents"] = (
             {str(source_file): _read_text(source_file) or ""} if source_file else {}
         )
+        family, family_findings = _family_context(finding)
+        cr.context["family"] = family
+        cr.context["family_findings"] = family_findings
         # History means PRIOR FIX ATTEMPTS, not currently-open findings.
         # Passing open findings put the finding under triage into its own
         # history, and the model correctly read that as "already in flight" and
@@ -333,6 +377,8 @@ def context(cr: ChangeRequest, span) -> ChangeRequest:
         span.set_attribute("context.files", len(cr.context.get("file_contents") or {}))
         span.set_attribute("context.history", len(cr.context.get("history") or []))
         span.set_attribute("context.policy_loaded", bool(cr.context.get("policy")))
+        span.set_attribute("context.family", cr.context.get("family") or "none")
+        span.set_attribute("context.family_findings", len(cr.context.get("family_findings") or []))
     return cr
 
 
@@ -403,11 +449,13 @@ def plan(cr: ChangeRequest, span) -> ChangeRequest:
     shared = {"previous": cr.context.get("previous_attempt"), "attempt": cr.attempts + 1}
 
     if cr.intake == INTAKE_FINDING:
+        family = cr.context.get("family")
         cr.changeset = planner.plan_fix(
             cr.finding,
             {"classification": cr.classification, "justification": cr.justification},
             cr.context.get("file_contents", {}),
             cr.context.get("policy", ""),
+            family={"name": family, "findings": cr.context.get("family_findings") or []} if family else None,
             **shared,
         )
     else:
@@ -466,11 +514,19 @@ def verify(cr: ChangeRequest, span) -> ChangeRequest:
     vulnerable. An introduced finding is a hard blocker, not a warning."""
     result = verify_mod.verify(cr.changeset, cr)
     cr.verify = result.as_dict()
+    # ONE ENTRY PER ATTEMPT, appended and never overwritten. A run rejected three
+    # times used to reach a human carrying only the third rejection, so finding
+    # out that attempt 1 edited the wrong file meant reading an hour of logs.
+    # This is what summary() publishes and what GET /api/runs/{id} serves.
+    cr.verify_attempts.append(result.record())
     if span is not None:
         span.set_attribute("verify.ok", result.ok)
+        span.set_attribute("verify.attempt", result.attempt)
         span.set_attribute("verify.tests_passed", result.tests_passed)
         span.set_attribute("verify.findings_closed", len(result.findings_closed))
         span.set_attribute("verify.findings_introduced", len(result.findings_introduced))
+        span.set_attribute("verify.findings_still_open", len(result.findings_still_open))
+        span.set_attribute("verify.rejected_reason", (result.rejected_reason or "")[:400])
         span.set_attribute("verify.evidence", (result.evidence or "")[:400])
     _safe(
         telemetry.counter,
@@ -628,13 +684,29 @@ def run(cr: ChangeRequest) -> ChangeRequest:
                     cr = escalate(cr, reason)
                     return close_out(cr)
 
-                # Loop back to PLAN with strictly more information than last time.
+                # Loop back to PLAN with strictly more information than last
+                # time: WHICH FILES the attempt wrote, the exact rejection, and
+                # whether the finding survived it. Attempt 2 repeating attempt
+                # 1's mistake is a prompt that did not carry the mistake.
+                still_open = cr.verify.get("findings_still_open") or []
+                target_id = (cr.finding or {}).get("finding_id")
                 cr.context["previous_attempt"] = {
                     "attempt": cr.attempts,
-                    "changeset": cr.changeset,
+                    "changeset": list(cr.changeset),
+                    "paths": list(cr.files_changed),
                     "verify": cr.verify,
+                    "finding_still_open": (
+                        any(f.get("finding_id") == target_id for f in still_open)
+                        if target_id else None
+                    ),
+                    "family_still_open": [f.get("check_id") for f in still_open],
                 }
                 cr.context["verify_failure"] = cr.verify.get("evidence")
+                log.info(
+                    "VERIFY rejected %s attempt %s: %s (wrote %s)",
+                    cr.run_id, cr.attempts, cr.verify.get("rejected_reason"),
+                    ", ".join(cr.files_changed) or "nothing",
+                )
                 log.info("VERIFY failed for %s, retry %s of %s", cr.run_id, cr.attempts, MAX_PLAN_ATTEMPTS - 1)
 
             cr = gate(cr)

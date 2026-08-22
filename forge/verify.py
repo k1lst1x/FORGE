@@ -292,14 +292,27 @@ def _describe(finding: dict) -> str:
     return f"{finding.get('check_id')} on {finding.get('route')} ({finding.get('severity')})"
 
 
-def compare(cr, before, after, changeset) -> tuple[list, list, bool, list[str]]:
+def family_findings(cr) -> list[dict]:
+    """The open siblings this run also has to close, put there by CONTEXT.
+
+    Empty for a finding that stands alone, which is most of them.
+    """
+    if cr is None:
+        return []
+    context = getattr(cr, "context", None) or {}
+    return [f for f in (context.get("family_findings") or []) if isinstance(f, dict)]
+
+
+def compare(cr, before, after, changeset) -> tuple[list, list, bool, list[str], list[dict], str]:
     """Decide whether the candidate is better than what it replaces.
 
-    Returns (findings_closed, findings_introduced, ok, evidence lines).
-    findings_introduced holds the HIGH findings that were not there before --
-    the blocking set. Anything new at MED or LOW is reported but does not block.
+    Returns (findings_closed, findings_introduced, ok, evidence lines,
+    findings_still_open, rejected_reason). findings_introduced holds the HIGH
+    findings that were not there before -- the blocking set. Anything new at MED
+    or LOW is reported but does not block.
     """
     notes: list[str] = []
+    reasons: list[str] = []
     baseline = bool(before is not None and getattr(before, "reachable", False))
     after_findings = list(getattr(after, "findings", []) or [])
     before_findings = list(getattr(before, "findings", []) or []) if baseline else []
@@ -322,32 +335,68 @@ def compare(cr, before, after, changeset) -> tuple[list, list, bool, list[str]]:
         )
 
     ok = True
+    still_open: list[dict] = []
 
     if cr is not None and getattr(cr, "finding", None):
         target = cr.finding.get("finding_id")
-        still_open = target in after_ids
-        if still_open:
+        if target in after_ids:
             ok = False
+            still_open.append(cr.finding)
             notes.append(
                 f"The finding this run exists to close, {_describe(cr.finding)}, is STILL PRESENT "
                 "after the patch. The change did not do what it was for."
             )
+            reasons.append(f"{_describe(cr.finding)} is still present after the patch")
         else:
             if target and target not in _ids(closed):
                 closed = closed + [cr.finding]
             notes.append(f"The target finding {_describe(cr.finding)} is gone from the fresh audit.")
+
+        # A family is closed together or not at all. Closing S1 while S2-S6 stay
+        # open is not most of a fix -- the route is exactly as unshippable as it
+        # was, and the next attempt would be handed the same five findings.
+        siblings = [f for f in family_findings(cr) if f.get("finding_id") != target]
+        if siblings:
+            family = cr.finding.get("family") or "family"
+            open_now = [f for f in siblings if f.get("finding_id") in after_ids]
+            gone = [f for f in siblings if f.get("finding_id") not in after_ids]
+            closed = closed + [f for f in gone if f.get("finding_id") not in _ids(closed)]
+            if open_now:
+                ok = False
+                still_open.extend(open_now)
+                notes.append(
+                    f"The `{family}` family was not closed in one change. Still open after the "
+                    "patch: " + "; ".join(_describe(f) for f in open_now)
+                    + ". These share a single fix, so a patch that closes some of them leaves the "
+                    "route in the same state and the next audit reports the rest."
+                )
+                reasons.append(
+                    f"{len(open_now)} of {len(siblings) + 1} `{family}` findings on "
+                    f"{cr.finding.get('route')} are still open"
+                )
+            else:
+                notes.append(
+                    f"All {len(siblings) + 1} open `{family}` findings on "
+                    f"{cr.finding.get('route')} are gone from the fresh audit."
+                )
     else:
         # A feature run: the routes it created must be clean on their own terms.
         created = new_routes(changeset)
         dirty = [f for f in _high(after_findings) if f.get("route") in created]
         if dirty:
             ok = False
+            still_open.extend(dirty)
             notes.append(
                 "The generated route(s) "
                 + ", ".join(sorted(set(created)))
                 + " came back with HIGH findings: "
                 + "; ".join(_describe(f) for f in dirty)
                 + ". The audit policy was the acceptance criteria for this code."
+            )
+            reasons.append(
+                "the generated route(s) came back with "
+                + str(len(dirty))
+                + " HIGH finding(s)"
             )
         elif created:
             notes.append(f"Generated route(s) {', '.join(sorted(set(created)))} have no HIGH findings.")
@@ -362,6 +411,9 @@ def compare(cr, before, after, changeset) -> tuple[list, list, bool, list[str]]:
                 + "; ".join(_describe(f) for f in introduced)
                 + ". A patch that closes one hole and opens another is not a fix."
             )
+            reasons.append(
+                "it introduces " + str(len(introduced)) + " HIGH finding(s) that were not there before"
+            )
         else:
             # Say what was actually measured. With no baseline we cannot claim
             # these are new, only that they are present, and the evidence a
@@ -373,12 +425,15 @@ def compare(cr, before, after, changeset) -> tuple[list, list, bool, list[str]]:
                 + "; ".join(_describe(f) for f in introduced)
                 + ". With no baseline these cannot be attributed to this change, only observed."
             )
+            reasons.append(
+                "the candidate still serves " + str(len(introduced)) + " HIGH finding(s)"
+            )
     if minor:
         notes.append(
             "Also new, not blocking: " + "; ".join(_describe(f) for f in minor)
         )
 
-    return closed, introduced, ok, notes
+    return closed, introduced, ok, notes, still_open, "; ".join(reasons)
 
 
 # --------------------------------------------------------------------------
@@ -405,6 +460,7 @@ def verify(changeset, cr) -> VerifyResult:
 
     changeset = list(changeset or [])
     routes = routes_under_test(changeset, cr)
+    attempt = int(getattr(cr, "attempts", 0) or 0) + 1
 
     # ---- check one: does it work ----
     tests_passed, test_output = run_tests(changeset)
@@ -412,6 +468,9 @@ def verify(changeset, cr) -> VerifyResult:
         return VerifyResult(
             ok=False,
             tests_passed=False,
+            attempt=attempt,
+            tests_output=test_output,
+            rejected_reason="the tests that accompany this change did not pass",
             evidence="TESTS FAILED -- not auditing a change that does not pass its own tests.\n\n" + test_output,
         )
 
@@ -433,7 +492,11 @@ def verify(changeset, cr) -> VerifyResult:
         return VerifyResult(
             ok=False,
             tests_passed=True,
+            attempt=attempt,
+            tests_output=test_output,
             audit_before=before.as_dict() if before is not None else {},
+            rejected_reason="the patched candidate could not be audited: "
+            + (startup_error or "unknown startup failure")[:200],
             evidence=(
                 "TESTS PASSED, BUT THE CANDIDATE COULD NOT BE AUDITED.\n\n"
                 + (startup_error or "unknown startup failure")
@@ -441,7 +504,7 @@ def verify(changeset, cr) -> VerifyResult:
             ),
         )
 
-    closed, introduced, ok, notes = compare(cr, before, after, changeset)
+    closed, introduced, ok, notes, still_open, rejected_reason = compare(cr, before, after, changeset)
 
     evidence = [
         "TESTS PASSED.",
@@ -461,17 +524,27 @@ def verify(changeset, cr) -> VerifyResult:
     result = VerifyResult(
         ok=ok,
         tests_passed=True,
+        attempt=attempt,
+        tests_output=test_output,
         audit_before=before.as_dict() if before is not None else {},
         audit_after=after.as_dict(),
         findings_closed=[f.get("finding_id") for f in closed],
         findings_introduced=[f.get("finding_id") for f in introduced],
+        findings_still_open=[
+            {"finding_id": f.get("finding_id"), "check_id": f.get("check_id"),
+             "route": f.get("route"), "severity": f.get("severity")}
+            for f in still_open
+        ],
+        rejected_reason="" if ok else (rejected_reason or "the fresh audit did not come back clean"),
         evidence="\n".join(evidence).strip(),
     )
     log.info(
-        "verify %s: ok=%s closed=%s introduced=%s",
+        "verify %s attempt %s: ok=%s closed=%s introduced=%s still_open=%s",
         getattr(cr, "run_id", "?"),
+        attempt,
         result.ok,
         len(result.findings_closed),
         len(result.findings_introduced),
+        len(result.findings_still_open),
     )
     return result

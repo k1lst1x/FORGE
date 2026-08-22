@@ -242,7 +242,9 @@ class VerifyResult:
             "attempt": self.attempt,
             "ok": self.ok,
             "tests_passed": self.tests_passed,
-            "tests_output": self.tests_output,
+            # Trimmed: the run record is read over HTTP and lives in runs.json.
+            # The full output stays on the VerifyResult and in the evidence.
+            "tests_output": (self.tests_output or "")[-4000:],
             "findings_closed": list(self.findings_closed),
             "findings_introduced": list(self.findings_introduced),
             "findings_still_open": list(self.findings_still_open),

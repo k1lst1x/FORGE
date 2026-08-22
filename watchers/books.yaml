@@ -25,7 +25,7 @@ fields:
 # a fix run against a feed that was simply still in flight. The threshold has to
 # be longer than one scrape interval plus one batch run: 900s interval + a batch
 # job that can take the full 600s timeout, with headroom for the next tick.
-max_age_seconds: 900
+max_age_seconds: 2400
 
 run:
   # NOT sync: this listing exceeds Bright Data's realtime page limit and the CLI

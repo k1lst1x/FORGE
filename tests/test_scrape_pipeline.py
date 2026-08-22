@@ -73,7 +73,9 @@ def test_the_hard_timeout_reaches_the_subprocess(monkeypatch):
     monkeypatch.setattr(bd.subprocess, "run", capture)
     monkeypatch.setattr(bd, "collector_id", lambda: "c_test")
     bd.scraper_run()
-    assert seen["timeout"] == bd.HARD_TIMEOUT_SECONDS == 120
+    # 600s, not 120s: Bright Data batches this target and a batch run takes
+    # minutes. At 120s we killed healthy runs and recorded them as timeouts.
+    assert seen["timeout"] == bd.HARD_TIMEOUT_SECONDS == 600
 
 
 def test_empty_stdout_with_exit_zero_is_zero_rows_not_a_crash(monkeypatch):
@@ -120,18 +122,36 @@ def test_too_few_rows_fails_the_contract():
 
 
 # -------------------------------------------------- the audit data checks --
-def test_d1_fires_when_the_data_is_stale(feed):
-    store.write_scrape(feed, bd.validate_contract(GOOD), contract_ok=True)
+def _age_the_feed(seconds: int) -> None:
     path = store.SCRAPE_DIR / "books.json"
     data = json.loads(path.read_text(encoding="utf-8"))
-    data["last_success_at"] = (datetime.now(timezone.utc) - timedelta(seconds=1840)).isoformat()
+    data["last_success_at"] = (datetime.now(timezone.utc) - timedelta(seconds=seconds)).isoformat()
     path.write_text(json.dumps(data), encoding="utf-8")
 
+
+def test_d1_fires_when_the_data_is_stale(feed):
+    store.write_scrape(feed, bd.validate_contract(GOOD), contract_ok=True)
+    _age_the_feed(3000)
+
     d1 = [f for f in audit.check_data(audit.load_policy(), "/") if f["check_id"] == "D1"]
-    assert d1, "a 1840s-old feed against a 900s threshold must raise D1"
-    assert "1840s ago" in d1[0]["evidence"]
-    assert "threshold 900s" in d1[0]["evidence"]
+    assert d1, "a 3000s-old feed against a 2400s threshold must raise D1"
+    assert "3000s ago" in d1[0]["evidence"]
+    assert "threshold 2400s" in d1[0]["evidence"]
     assert d1[0]["severity"] == "MED"
+
+
+def test_d1_does_not_fire_on_a_feed_that_is_merely_waiting_for_a_batch_job(feed):
+    """The false positive our own pipeline created.
+
+    A batch run takes minutes and the scrape interval is 900s, so at the old
+    900s threshold D1 fired on nothing but Bright Data being slow -- and that
+    finding opened a fix run against a feed that was simply still in flight.
+    """
+    store.write_scrape(feed, bd.validate_contract(GOOD), contract_ok=True)
+    _age_the_feed(1840)
+
+    d1 = [f for f in audit.check_data(audit.load_policy(), "/") if f["check_id"] == "D1"]
+    assert d1 == [], "1840s is one interval plus a batch run, not a stale feed"
 
 
 def test_d2_fires_on_zero_rows(feed):
