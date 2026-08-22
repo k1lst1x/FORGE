@@ -1,0 +1,9 @@
+{% extends "base.html" %}
+{% block content %}
+<p>Competitor pricing, scraped live.</p>
+<ul>
+  <li>{{ count }} products tracked</li>
+  <li>{{ out_of_stock }} currently out of stock</li>
+  <li>Last scrape: {{ freshness.age_seconds }}s ago from {{ freshness.source }}</li>
+</ul>
+{% endblock %}

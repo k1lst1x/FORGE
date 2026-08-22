@@ -1,0 +1,170 @@
+# FORGE audit policy -- the definition of "good".
+#
+# These 17 checks are the acceptance criteria for BOTH loops. A fix run must
+# close its finding without opening a new one; a feature run must produce a
+# page that passes all of them. Constraints are not in a prompt, they are the
+# checks the result has to survive.
+#
+# Every check here is a real class of production defect, detectable from
+# outside the app, and most are fixable by editing one file. Note how many of
+# them a code-generating model gets wrong by default -- that is the point.
+#
+# severity: HIGH | MED | LOW
+# category: security | quality | performance
+# scope:    page (per route) | app (per deployment, attributed to the app root)
+# action:   autofix (contained) | escalate (blast radius we cannot reason about)
+#
+# Owner: Rohit.
+
+version: 1
+
+thresholds:
+  response_time_ms: 500      # P1
+  secret_min_hex: 32         # S10, length of a bare hex string worth flagging
+  secret_min_b64: 40         # S10, length of a base64 blob worth flagging
+
+exposure_paths:              # S9 / S12 probe these once per audit run
+  - /.env
+  - /.git/config
+  - /admin
+  - /debug
+  - /docs
+
+checks:
+  # ---------------- security: headers and exposure ----------------
+  - id: S1
+    title: Content-Security-Policy present
+    severity: HIGH
+    category: security
+    scope: page
+    action: autofix
+    fix_hint: Add security-headers middleware setting Content-Security-Policy
+
+  - id: S2
+    title: X-Frame-Options or CSP frame-ancestors present
+    severity: HIGH
+    category: security
+    scope: page
+    action: autofix
+    fix_hint: Same security-headers middleware; set X-Frame-Options DENY or CSP frame-ancestors none
+
+  - id: S3
+    title: Strict-Transport-Security present
+    severity: MED
+    category: security
+    scope: page
+    action: autofix
+    fix_hint: Same middleware; add Strict-Transport-Security with max-age
+
+  - id: S4
+    title: "X-Content-Type-Options: nosniff"
+    severity: MED
+    category: security
+    scope: page
+    action: autofix
+    fix_hint: Same middleware; add X-Content-Type-Options nosniff
+
+  - id: S5
+    title: Referrer-Policy present
+    severity: LOW
+    category: security
+    scope: page
+    action: autofix
+    fix_hint: Same middleware; add Referrer-Policy no-referrer
+
+  - id: S6
+    title: Server / X-Powered-By not leaking a version
+    severity: MED
+    category: security
+    scope: page
+    action: autofix
+    fix_hint: Strip or blank the Server and X-Powered-By headers in middleware
+
+  - id: S7
+    title: Cookies have Secure, HttpOnly and SameSite
+    severity: HIGH
+    category: security
+    scope: page
+    action: autofix
+    fix_hint: Set secure=True, httponly=True, samesite=lax on every set_cookie call
+
+  - id: S8
+    title: CORS not wildcard when credentials are allowed
+    severity: HIGH
+    category: security
+    scope: page
+    action: escalate
+    fix_hint: Replace the wildcard origin with an explicit allowlist -- blast radius, a human decides
+
+  - id: S9
+    title: Sensitive paths unreachable
+    severity: HIGH
+    category: security
+    scope: app
+    action: autofix
+    fix_hint: Add a route guard returning 404 for /.env, /.git/config, /admin and /debug
+
+  - id: S10
+    title: No secret-shaped strings in HTML or inline JS
+    severity: HIGH
+    category: security
+    scope: page
+    action: autofix
+    fix_hint: Remove the value from the template and read it from the environment instead
+
+  - id: S11
+    title: Error pages do not leak stack traces
+    severity: HIGH
+    category: security
+    scope: app
+    action: autofix
+    fix_hint: Add an exception handler returning a generic 500 and log the detail server-side
+
+  - id: S12
+    title: API documentation endpoint not exposed in production mode
+    severity: MED
+    category: security
+    scope: app
+    action: autofix
+    fix_hint: Guard the docs route behind settings.ENV == dev (docs_url=None in production)
+
+  # ---------------- quality, accessibility, performance ----------------
+  - id: Q1
+    title: Every img element has non-empty alt text
+    severity: MED
+    category: quality
+    scope: page
+    action: autofix
+    fix_hint: Add a descriptive alt attribute to each img in the template
+
+  - id: Q2
+    title: External links carry rel=noopener
+    severity: MED
+    category: quality
+    scope: page
+    action: autofix
+    fix_hint: Add rel="noopener noreferrer" to anchors pointing at another origin
+
+  - id: Q3
+    title: Page has a title and a meta description
+    severity: LOW
+    category: quality
+    scope: page
+    action: autofix
+    fix_hint: Add a title element and a meta name=description to the template head
+
+  - id: Q4
+    title: No broken internal links
+    severity: MED
+    category: quality
+    scope: page
+    action: autofix
+    fix_hint: Fix the href or add the missing route
+
+  - id: P1
+    title: Response time under 500ms
+    severity: MED
+    category: performance
+    scope: page
+    action: escalate
+    fix_hint: Needs analysis before a change -- profile the route, a human decides

@@ -1,7 +1,22 @@
-pytest>=8.0.0
-pytest-playwright>=0.4.0
-httpx>=0.27.0
-uvicorn>=0.28.0
+# forge-control + pulse
 fastapi>=0.110.0
+uvicorn[standard]>=0.28.0
+httpx>=0.27.0
 pydantic-settings>=2.0.0
 websockets>=12.0
+beautifulsoup4
+pyyaml
+python-dotenv
+psutil
+
+# LLM providers -- only the selected one needs a key (FORGE_LLM_PROVIDER)
+openai
+anthropic
+
+# telemetry -- http/protobuf on purpose: grpcio does not build everywhere
+opentelemetry-sdk
+opentelemetry-exporter-otlp-proto-http
+
+# tests
+pytest>=8.0.0
+pytest-playwright>=0.4.0
