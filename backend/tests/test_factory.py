@@ -1,7 +1,7 @@
 from fastapi.testclient import TestClient
 
 from app.core.config import settings
-from app.factory import portal
+from app.factory import brightdata, portal, telemetry
 from app.factory.models import ChangeRequest, IntakeType
 from app.main import app
 
@@ -109,6 +109,50 @@ def test_scheduler_start_stop_cycle() -> None:
     stopped = client.post("/factory/audit/stop")
     assert stopped.status_code == 200
     assert stopped.json()["running"] is False
+
+
+def test_brightdata_snapshot_detects_change(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr(brightdata, "_SNAPSHOT_DIR", tmp_path)
+    responses = iter(["<html>first</html>", "<html>second</html>", "<html>third</html>"])
+
+    class FakeResponse:
+        def __init__(self, text: str) -> None:
+            self.text = text
+
+        def raise_for_status(self) -> None:
+            return None
+
+    def fake_get(url: str, **_: object) -> FakeResponse:
+        return FakeResponse(next(responses))
+
+    monkeypatch.setattr(brightdata.httpx, "get", fake_get)
+
+    first = brightdata.snapshot_page("https://example.com/products")
+    second = brightdata.snapshot_page("https://example.com/products")
+
+    assert first["changed"] is True
+    assert second["changed"] is True
+    assert brightdata.detect_change("https://example.com/products") is True
+
+
+def test_stage_span_emits_signoz_payload(monkeypatch) -> None:
+    calls: list[tuple[str, dict, str]] = []
+
+    monkeypatch.setattr(settings, "signoz_ingestion_key", "test-key")
+    monkeypatch.setattr(settings, "signoz_ingest_base_url", "https://ingest.example.com")
+
+    def fake_post(url: str, *, json: dict, headers: dict, timeout: float) -> object:
+        calls.append((url, json, headers["signoz-ingestion-key"]))
+        return object()
+
+    monkeypatch.setattr("app.factory.telemetry.httpx.post", fake_post)
+
+    with telemetry.stage_span("context", "run_123", "trace_456"):
+        pass
+
+    assert calls
+    assert calls[0][2] == "test-key"
+    assert calls[0][1]["resourceSpans"][0]["scopeSpans"][0]["spans"][0]["attributes"][0]["key"] == "run_id"
 
 
 def test_port_upsert_run_uses_real_entity_payload(monkeypatch) -> None:

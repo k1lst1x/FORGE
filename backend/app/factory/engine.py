@@ -1,6 +1,6 @@
 from uuid import uuid4
 
-from app.factory import portal, store, telemetry, vcs
+from app.factory import brightdata, portal, store, telemetry, vcs
 from app.factory.models import (
     ChangeRequest,
     FactoryRunStatus,
@@ -82,12 +82,14 @@ def _handle_stage(cr: ChangeRequest, stage: str) -> str:
             return "Change request accepted and mirrored to Port stub."
         case "context":
             store.update_run(cr.run_id, status=FactoryRunStatus.gathering_context)
+            snapshot = brightdata.snapshot_page("https://example.com", timeout=5.0)
             cr.context = {
                 "target_app": "pulse",
                 "registered_routes": ["/", "/products"],
                 "audit_policy": "policy/audit_policy.yaml",
+                "brightdata_snapshot": snapshot,
             }
-            return "Loaded target app routes and audit policy context."
+            return "Loaded target app routes and audit policy context with a Bright Data snapshot check."
         case "triage":
             store.update_run(cr.run_id, status=FactoryRunStatus.triaging)
             cr.classification = TriageClassification.autofix_safe
