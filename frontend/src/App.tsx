@@ -319,6 +319,11 @@ function App() {
   if (!authenticated) {
     return (
       <main className="auth-shell">
+        <div className="auth-nav">
+          <a href="index.html">Landing</a>
+          <a href="dashboard.html#live">Dashboard</a>
+          <a href="app.html">Operator app</a>
+        </div>
         <section className="auth-card" aria-labelledby="login-title">
           <p className="kicker">FORGE operator console</p>
           <h1 id="login-title">Sign in</h1>
@@ -344,6 +349,14 @@ function App() {
 
   return (
     <main className="shell">
+      <div className="topbar">
+        <div className="topbar-links">
+          <a href="index.html">Landing</a>
+          <a href="dashboard.html#live">Dashboard</a>
+          <a href="app.html">Operator app</a>
+        </div>
+        <button type="button" className="secondary-button" onClick={handleLogout}>Sign out</button>
+      </div>
       <section className="intro" aria-labelledby="title">
         <p className="kicker">Sat 22 Aug 2026 · Bright Data Loft, SF</p>
         <h1 id="title">FORGE</h1>
