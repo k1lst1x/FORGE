@@ -82,7 +82,12 @@ SIGNOZ_REGION = os.getenv("SIGNOZ_REGION", "us")
 def missing() -> dict[str, bool]:
     """What is genuinely not configured. Used by /api/status and at startup."""
     return {
-        "llm": not (os.getenv("ANTHROPIC_API_KEY") or os.getenv("OPENAI_API_KEY")),
+        "llm": not (
+            os.getenv("ANTHROPIC_API_KEY")
+            or os.getenv("FORGE_ANTHROPIC_API_KEY")
+            or os.getenv("OPENAI_API_KEY")
+            or os.getenv("FORGE_OPENAI_API_KEY")
+        ),
         "github": not GITHUB_TOKEN,
         "port": not (PORT_CLIENT_ID and PORT_CLIENT_SECRET),
         "brightdata": not BRIGHTDATA_API_TOKEN,
