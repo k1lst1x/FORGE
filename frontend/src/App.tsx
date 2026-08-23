@@ -70,7 +70,7 @@ const stages = [
   { label: "Approve", icon: UserCheck, value: "Human reviews before release" },
 ];
 
-const API_BASE_URL = import.meta.env.VITE_API_URL ?? "http://localhost:8000";
+const API_BASE_URL = import.meta.env.VITE_API_URL ?? "http://localhost:8100";
 const AUTH_TOKEN_KEY = "forge_access_token";
 const LOGIN_PATH = "/auth/login";
 
