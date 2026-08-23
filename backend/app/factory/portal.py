@@ -193,12 +193,19 @@ def upsert_run(cr: ChangeRequest) -> str:
                 "attempts": int(getattr(cr, "attempts", 0) or 0),
                 "files_changed": list(getattr(cr, "changeset", []) or []),
                 "branch": cr.branch or "",
-                "pr_url": cr.pr_url or "",
                 "approved": bool(getattr(cr, "approved", False)),
                 "outcome": cr.outcome or "",
                 "duration_ms": float(getattr(cr, "duration_ms", 0.0) or 0.0),
             },
         }
+
+        # pr_url is declared `format: "url"` in the blueprint, and Port's
+        # validator rejects "" as not a url. upsert_run first fires at the
+        # intake stage, when there is no PR yet, so sending "" 422'd EVERY
+        # run and nothing ever reached the catalog. Omit the key instead:
+        # absent is a valid state for an optional property, empty is not.
+        if cr.pr_url:
+            payload["properties"]["pr_url"] = cr.pr_url
         response = httpx.post(
             f"{_port_base_url()}/blueprints/{_PORT_BLUEPRINT}/entities",
             headers=headers,
