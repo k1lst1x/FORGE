@@ -147,7 +147,7 @@ SCRAPE_DIR = config.REPO_ROOT / "data"
 
 
 def _scrape_path(watcher: dict) -> Path:
-    return config.REPO_ROOT / (watcher.get("output") or "data/books.json")
+    return config.PROJECT_ROOT / (watcher.get("output") or "data/books.json")
 
 
 def write_scrape(watcher: dict, rows: list[dict], contract_ok: bool) -> dict:

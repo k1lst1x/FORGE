@@ -14,7 +14,40 @@ from pathlib import Path
 
 log = logging.getLogger("forge.config")
 
+#: Where the backend package lives. .env and the state directory hang off this.
 REPO_ROOT = Path(__file__).resolve().parent.parent
+
+
+def _find_project_root(start: Path) -> Path:
+    """The directory that actually holds watchers/, policy/ and contracts/.
+
+    The migration moved the code into backend/app/ but left watchers/, policy/,
+    contracts/ and the scrape output at the REPO ROOT, one level above
+    REPO_ROOT -- which was never updated to match. brightdata.watcher() went
+    looking for backend/watchers/books.yaml, did not find it, and returned {}.
+    The scraper was configured out of existence: no target_url, no contract, no
+    output path, and the only evidence was a single log line. Nothing crashed,
+    which is exactly why it went unnoticed.
+
+    Walk up and take the first directory with that layout. Falls back to
+    `start`, so if backend/ ever owns these directories this keeps working with
+    no further change.
+    """
+    for candidate in (start, *start.parents):
+        if (candidate / "watchers").is_dir() and (candidate / "policy").is_dir():
+            return candidate
+    return start
+
+
+#: Where the factory's DATA and CONFIG live: watchers/, policy/, contracts/,
+#: data/. Not the same as REPO_ROOT while the forge/ migration is unfinished.
+PROJECT_ROOT = _find_project_root(REPO_ROOT)
+
+
+def project_path(value: str | Path) -> Path:
+    """Resolve a config-relative path against PROJECT_ROOT, absolutes intact."""
+    path = Path(value)
+    return path if path.is_absolute() else PROJECT_ROOT / path
 
 
 def _load_env() -> None:
@@ -54,7 +87,9 @@ def _int(name: str, default: int) -> int:
 PULSE_BASE_URL = os.getenv("PULSE_BASE_URL", "http://localhost:8100")
 PULSE_DIR = os.getenv("PULSE_DIR", "pulse")
 TESTS_DIR = os.getenv("TESTS_DIR", "tests")
-POLICY_PATH = os.getenv("FORGE_POLICY_PATH", "policy/audit_policy.yaml")
+# Resolved against PROJECT_ROOT: policy/ is at the repo root, not under
+# backend/, so a bare relative path only worked when cwd happened to be right.
+POLICY_PATH = str(project_path(os.getenv("FORGE_POLICY_PATH", "policy/audit_policy.yaml")))
 
 FORGE_CONTROL_PORT = _int("FORGE_CONTROL_PORT", 8000)
 FORGE_CONTROL_URL = os.getenv("FORGE_CONTROL_URL", f"http://localhost:{FORGE_CONTROL_PORT}")

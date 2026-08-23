@@ -32,7 +32,10 @@ from app import config
 log = logging.getLogger("forge.brightdata")
 
 STUB = False
-REPO = config.REPO_ROOT
+# PROJECT_ROOT, not REPO_ROOT: watchers/, contracts/ and data/ live at the
+# repo root while the forge/ migration is unfinished. This is also the cwd
+# the Bright Data CLI runs in, so its relative output paths land correctly.
+REPO = config.PROJECT_ROOT
 WATCHER_PATH = Path(os.getenv("FORGE_BOOKS_WATCHER", str(REPO / "watchers" / "books.yaml")))
 
 #: Hard ceiling. The CLI polls a batch job and will happily wait an hour.
