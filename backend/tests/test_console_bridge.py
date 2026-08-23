@@ -27,7 +27,15 @@ def test_status_carries_the_keys_normstatus_reads() -> None:
     payload = client.get("/api/status").json()
 
     assert payload["scheduler"] in ("healthy", "down")
-    assert isinstance(payload["next_audit_seconds"], int)
+
+    # None when the scheduler is stopped -- there is no next audit to count to.
+    # Reporting the interval instead froze the header at a constant 1:00: the
+    # console ticks locally but re-reads this every 3s, so it fell to 0:57 and
+    # snapped back forever. mmss(null) renders "--:--".
+    if payload["scheduler"] == "healthy":
+        assert isinstance(payload["next_audit_seconds"], int)
+    else:
+        assert payload["next_audit_seconds"] is None
     assert isinstance(payload["runs_today"], int)
     assert set(payload["severity"]) == {"HIGH", "MED", "LOW"}
     assert isinstance(payload["grades"], dict)

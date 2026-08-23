@@ -35,14 +35,18 @@ safe only because the server binds 127.0.0.1. Do not expose this port.
 """
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+import asyncio
+import logging
+from datetime import UTC, datetime
 from typing import Any
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, BackgroundTasks, HTTPException
 from pydantic import BaseModel, Field
 
 from app.factory import engine, observability, scheduler, store
 from app.factory.models import FactoryRun, FactoryRunDetail, FactoryRunStatus
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["console-bridge"])
 
@@ -80,6 +84,17 @@ def _parse(ts: str | None) -> datetime | None:
 def _iso(ts: str | None) -> str | None:
     parsed = _parse(ts)
     return parsed.isoformat() if parsed else None
+
+
+def _parse_iso(value: object) -> datetime | None:
+    """Parse an offset-aware ISO timestamp, as the scheduler writes them."""
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
 
 
 def _stages_for(detail: FactoryRunDetail) -> dict[str, dict[str, Any]]:
@@ -221,12 +236,19 @@ def console_status() -> dict[str, Any]:
             buckets[11 - hours_ago] += 1
 
     interval = int(sched.get("interval_seconds") or 60)
-    next_audit = interval
-    if sched.get("running") and sched.get("last_started_at"):
-        started = _parse(str(sched["last_started_at"]).replace("Z", "+00:00").split("+")[0])
+
+    # None when the scheduler is stopped, because then there is no next audit.
+    # Reporting the bare interval instead pinned the header at a constant 60:
+    # the console ticks its own countdown down but re-reads this every 3s, so
+    # it fell to 0:57 and snapped back to 1:00 forever. mmss(null) renders
+    # "--:--", and the local tick skips null, so an idle scheduler now looks
+    # idle instead of looking broken.
+    next_audit: int | None = None
+    if sched.get("running"):
+        next_audit = interval
+        started = _parse_iso(sched.get("last_started_at"))
         if started:
-            elapsed = (now - started).total_seconds()
-            next_audit = max(0, int(interval - (elapsed % interval)))
+            next_audit = max(0, int(interval - (now - started).total_seconds()))
 
     return {
         "scheduler": "healthy" if sched.get("running") else "down",
@@ -307,16 +329,52 @@ class ConsoleBrief(BaseModel):
     priority: str | None = None
 
 
+def _execute_in_background(run_id: str) -> None:
+    """A failed run must not take the service with it."""
+    try:
+        engine.resume_planned_run(run_id)
+    except Exception:
+        logger.exception("background run %s failed", run_id)
+
+
 @router.post("/api/brief")
-def console_brief(payload: ConsoleBrief) -> dict[str, Any]:
-    change_request = engine.run_from_brief(brief=payload.description, trigger="console")
-    return {"accepted": True, "run_id": change_request.run_id}
+def console_brief(payload: ConsoleBrief, background_tasks: BackgroundTasks) -> dict[str, Any]:
+    """Accept a brief and return BEFORE the run finishes.
+
+    Running the eight stages inline took 7.3s against the console's 8s abort,
+    so a submission failed on any network jitter -- and failed misleadingly:
+    the browser gave up but the server carried the run to completion, so
+    "Could not submit" left a finished run behind. Retrying then produced a
+    second one. Exactly what forge-control's own intake docstring warned about.
+
+    The run is RECORDED inside the request, so the id is real and the console's
+    next poll finds it, and EXECUTED in a background task.
+    """
+    run_id = engine.create_planned_run(brief=payload.description, trigger="console")
+    background_tasks.add_task(_execute_in_background, run_id)
+    return {"accepted": True, "run_id": run_id}
+
+
+def _audit_in_background() -> None:
+    """Sync on purpose, so Starlette runs it in a worker thread.
+
+    scheduler.run_once() is declared async but its body is blocking -- it calls
+    straight into the engine, which does subprocess and sync-httpx work. As an
+    async background task it ran ON the event loop and stalled every other
+    response for the length of the run: POST /audit/run took 17s to return a
+    body it had already produced. In a thread it returns in milliseconds.
+    """
+    try:
+        asyncio.run(scheduler.run_once())
+    except Exception:
+        logger.exception("background audit failed")
 
 
 @router.post("/audit/run")
-async def console_audit_now() -> dict[str, Any]:
-    run_id = await scheduler.run_once()
-    return {"accepted": True, "run_id": run_id}
+def console_audit_now(background_tasks: BackgroundTasks) -> dict[str, Any]:
+    """Same contract as the brief intake: return now, audit in the background."""
+    background_tasks.add_task(_audit_in_background)
+    return {"accepted": True}
 
 
 @router.get("/api/approvals")

@@ -46,6 +46,31 @@ def create_planned_run(*, brief: str, trigger: str = "manual") -> str:
     return run_id
 
 
+def resume_planned_run(run_id: str) -> ChangeRequest:
+    """Execute a run that create_planned_run() has already recorded.
+
+    Without this a planned run is a dead letter: create_planned_run() writes
+    the row and returns, and nothing anywhere can start it afterwards -- so
+    POST /factory/runs with auto_start=false produced a run that could never
+    move off `planned`.
+
+    It also lets a web layer split intake from execution: record the run inside
+    the request so the caller gets an id immediately, then execute in a
+    background task. A caller that waits on a full run times out and retries,
+    and one brief becomes two runs.
+    """
+    run = store.get_run(run_id)
+    cr = ChangeRequest(
+        run_id=run_id,
+        intake=run.intake,
+        title=run.title,
+        brief_text=run.brief,
+        trace_id=telemetry.new_trace_id(),
+    )
+    store.update_run(run_id, trace_id=cr.trace_id)
+    return execute(cr)
+
+
 def run_from_brief(*, brief: str, trigger: str = "manual") -> ChangeRequest:
     run_id = f"run_{uuid4().hex[:12]}"
     title = _title_from_brief(brief)
