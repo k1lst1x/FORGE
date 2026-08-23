@@ -1,9 +1,7 @@
 """
 pulse/main.py -- Pulse. The app the factory builds and audits.
 
-Deliberately plain and deliberately insecure, per section 13: no security
-headers, /docs open, an image with no alt text. That is what a model writes
-when you ask it for a quick FastAPI app -- which is the point the demo makes.
+Deliberately plain, per section 13: /docs open, an image with no alt text.
 The factory finds these and fixes them.
 
 Data is really scraped. Nothing here is hardcoded product data.
@@ -25,6 +23,20 @@ from pulse.routes import security  # noqa: E402
 app = FastAPI(title="Pulse")  # note: /docs is open by default
 templates = Jinja2Templates(directory=str(Path(__file__).resolve().parent / "templates"))
 app.include_router(security.router)
+
+
+@app.middleware("http")
+async def security_headers(request: Request, call_next):
+    response = await call_next(request)
+    response.headers["Content-Security-Policy"] = "default-src 'self'; frame-ancestors 'none'"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["Referrer-Policy"] = "no-referrer"
+    for header in ("Server", "X-Powered-By"):
+        if header in response.headers:
+            del response.headers[header]
+    return response
 
 
 def _feed() -> dict:
