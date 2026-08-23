@@ -19,10 +19,17 @@ window.FORGE_CONFIG = {
   supabaseAnonKey: '',
 
   // Where an entity's canonical record lives. {id} is substituted.
-  portRunUrl: 'https://app.getport.io/factory_runEntity?identifier={id}',
+  // forge_runEntity, NOT factory_runEntity. Both blueprints exist in Port,
+  // but portal.py writes every entity to forge_run -- so this pointed at a
+  // real page that never held the run, and every "Open in Port" was a 404.
+  portRunUrl: 'https://app.getport.io/forge_runEntity?identifier={id}',
   portFindingUrl: 'https://app.getport.io/findingEntity?identifier={id}',
   portPageUrl: 'https://app.getport.io/pageEntity?identifier={id}',
-  portApprovalUrl: 'https://app.getport.io/approvals?identifier={id}',
+  // Blank on purpose. There is no approvals blueprint in Port, and
+  // portal.request_approval() only returns the string "approval-<run_id>";
+  // it creates nothing. renderGate() falls back to portUrl('Run', run_id)
+  // when this is empty, which lands on an entity that genuinely exists.
+  portApprovalUrl: '',
   signozTraceUrl: 'https://forge.signoz.io/trace/{id}',
 
   // Poll intervals in ms. The spec'd cadence; slow them down if a laptop cooks.
