@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import functools
 import logging
+import re
 import threading
 import time
 import traceback
@@ -186,20 +187,76 @@ def _read_text(path: Path, limit: int = 20000) -> str | None:
         return None
 
 
+def _repo_path(path: Path) -> str:
+    """A repo-relative path with forward slashes, matching what the model returns.
+
+    The planner normalises every path it is given back to this shape, and its
+    rails key off it -- including the one that refuses a rewrite which deletes
+    most of a file. Hand it a Windows Path rendered with a backslash and that lookup
+    misses, the rail sees no original to compare against, and a patch that
+    replaced the whole app with a stub sails through.
+    """
+    try:
+        resolved = path.resolve().relative_to(Path(config.REPO_ROOT).resolve())
+    except Exception:
+        resolved = path
+    return str(resolved).replace("\\", "/").lstrip("./")
+
+
+def _serves_route(body: str, route: str) -> bool:
+    """Does this file actually declare a handler for that route?
+
+    Substring matching does NOT work here and quietly broke the whole fix loop:
+    the route is "/", which appears in every import path, every URL and every
+    comment, so the first file in the glob won -- pulse/routes/security.py. The
+    planner was then shown a route module and asked to fix a response header on
+    "/", which is a question that file cannot answer. That is run_f1e86721, and
+    it is why "the planner writes patches that cannot close the finding" was the
+    symptom rather than the cause.
+    """
+    pattern = re.compile(
+        r"@(?:app|router)\.(?:get|post|put|delete|patch|head|options)\(\s*[\"']"
+        + re.escape(route)
+        + r"[\"']"
+    )
+    return bool(pattern.search(body or ""))
+
+
 def _route_file(route: str | None) -> Path | None:
-    """Best guess at the file that serves a route. Cheap, and good enough --
-    the planner is given the file contents, not asked to find them."""
+    """The file that actually serves a route, by its decorator -- not by substring.
+
+    pulse/main.py is checked FIRST because it defines the app, and because an
+    app-wide concern attributed to "/" belongs to it whatever else matches.
+    """
     if not route:
         return None
     pulse = Path(config.PULSE_DIR)
-    candidates = list((pulse / "routes").glob("*.py")) if (pulse / "routes").is_dir() else []
     main = pulse / "main.py"
-    candidates.append(main)
+    candidates = [main] + sorted((pulse / "routes").glob("*.py")) if (pulse / "routes").is_dir() else [main]
     for candidate in candidates:
         body = _read_text(candidate)
-        if body and (route in body):
+        if body and _serves_route(body, route):
             return candidate
     return main if main.exists() else None
+
+
+def _context_files(finding: dict) -> dict:
+    """The files the planner needs, keyed the way the planner keys them.
+
+    Always includes pulse/main.py. Response headers, middleware, CORS, docs
+    guards and exception handlers all live there regardless of which route the
+    finding is attributed to, and a model asked to return the FULL content of a
+    file it was never shown will invent one -- which is how a patch for a header
+    on "/" came back as a 23-line main.py with every other route deleted.
+    """
+    files: dict = {}
+    source = _route_file((finding or {}).get("route"))
+    if source is not None and source.exists():
+        files[_repo_path(source)] = _read_text(source) or ""
+    main = Path(config.PULSE_DIR) / "main.py"
+    if main.exists():
+        files.setdefault(_repo_path(main), _read_text(main) or "")
+    return files
 
 
 def _page_source(finding: dict) -> str:
@@ -378,10 +435,8 @@ def context(cr: ChangeRequest, span) -> ChangeRequest:
         source_file = _route_file(route)
         cr.context["route"] = route
         cr.context["page_source"] = _page_source(finding)
-        cr.context["source_path"] = str(source_file) if source_file else None
-        cr.context["file_contents"] = (
-            {str(source_file): _read_text(source_file) or ""} if source_file else {}
-        )
+        cr.context["source_path"] = _repo_path(source_file) if source_file else None
+        cr.context["file_contents"] = _context_files(finding)
         family, family_findings = _family_context(finding)
         cr.context["family"] = family
         cr.context["family_findings"] = family_findings
@@ -395,9 +450,9 @@ def context(cr: ChangeRequest, span) -> ChangeRequest:
         routes_dir, templates_dir = pulse / "routes", pulse / "templates"
         route_files = sorted(routes_dir.glob("*.py")) if routes_dir.is_dir() else []
         template_files = sorted(templates_dir.glob("*.html")) if templates_dir.is_dir() else []
-        cr.context["existing_routes"] = [str(p) for p in route_files]
+        cr.context["existing_routes"] = [_repo_path(p) for p in route_files]
         cr.context["templates"] = {p.name: _read_text(p) or "" for p in template_files}
-        cr.context["file_contents"] = {str(p): _read_text(p) or "" for p in route_files}
+        cr.context["file_contents"] = {_repo_path(p): _read_text(p) or "" for p in route_files}
         cr.context["page_source"] = ""
         cr.context["history"] = []
 

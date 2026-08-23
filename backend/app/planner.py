@@ -200,6 +200,17 @@ particular file does in this change."""
 # --------------------------------------------------------------------------
 # the shared machinery -- both entry points go through exactly this
 # --------------------------------------------------------------------------
+def _normalise_path(path) -> str:
+    """One spelling for a repo path: forward slashes, no leading ./.
+
+    Every rail in this module keys off this. A path that reaches one rail as
+    "pulse/main.py" and another as a Windows-style path is a rail that does not
+    fire, and the rails here are the difference between a minimal patch and a
+    generated file that deletes the app.
+    """
+    return (path or "").replace(chr(92), "/").lstrip("./")
+
+
 def _excerpt(text: str | None, limit: int = MAX_EXCERPT) -> str:
     text = (text or "").strip()
     if len(text) <= limit:
@@ -509,7 +520,7 @@ def _accept(data: dict, usage: dict, attempt: int, file_contents=None) -> Change
 
     accepted, rejected = [], []
     for entry in data.get("files", []):
-        path = (entry.get("path") or "").replace("\\", "/").lstrip("./")
+        path = _normalise_path(entry.get("path"))
         if not path.startswith(WRITABLE_PREFIXES) or ".." in path:
             rejected.append(path)
             continue
@@ -534,7 +545,12 @@ def _accept(data: dict, usage: dict, attempt: int, file_contents=None) -> Change
     # change -- it is the model reconstructing a file it only half looked at.
     # This actually happened: a patch for the /docs guard came back as a
     # one-line main.py and wiped every route in the app.
-    originals = file_contents if isinstance(file_contents, dict) else {}
+    # Keyed the way `accepted` is keyed, or the lookup below silently misses.
+    # A caller handing us a Windows-style path meant `before` was always empty,
+    # the guard never fired, and a patch that replaced the whole app with a
+    # 23-line stub was accepted as minimal.
+    given = file_contents if isinstance(file_contents, dict) else {}
+    originals = {_normalise_path(path): body for path, body in given.items()}
     for entry in accepted:
         before = (originals.get(entry["path"]) or "").strip()
         if not before:

@@ -37,3 +37,23 @@ This listing exceeds Bright Data's realtime page limit, so `--sync` is refused
 and the CLI falls back to a batch job on its own. `watchers/books.yaml` sets
 `mode: async` to skip the wasted round trip. A batch run takes minutes, which
 is another reason scraping is never on the demo path.
+
+Everything below follows from "a batch run takes minutes", and the three
+numbers have to stay consistent with each other:
+
+| what | value | where | why |
+| --- | --- | --- | --- |
+| scrape timeout | 600s | `FORGE_SCRAPE_TIMEOUT`, `run.timeout_seconds` | 120s killed healthy batch runs and logged them as timeouts |
+| scrape interval | 900s | `SCRAPE_INTERVAL_SECONDS`, `run.interval_seconds` | one scrape per 15 min, not one per audit tick |
+| D1 freshness | 2400s | `max_age_seconds` | must outlast one interval **plus** one full batch run, or D1 fires on our own pipeline |
+
+The audit keeps its own `AUDIT_INTERVAL_SECONDS` and is **decoupled** from all
+three: it reads whatever is in `data/books.json` regardless of when that was
+written. The scrape runs in its own daemon thread that no audit tick joins, and
+if one is still in flight when the next tick fires the tick skips the scrape and
+audits anyway — never two collectors at once, never a tick blocked on one.
+
+`scripts/scrape.py` defaults to `--no-wait`: it hands the batch job to a
+detached child, prints where the log is, and returns. `--wait` is the blocking
+form, and it is what the child itself runs. Nothing on the demo path waits on a
+batch job.
