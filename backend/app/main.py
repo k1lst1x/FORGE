@@ -8,7 +8,7 @@ from app.api.factory import router as factory_router
 from app.api.auth import router as auth_router
 from app.api.console import router as console_router
 from app.core.config import settings
-from app.factory import portal, vcs
+from app.factory import portal, scheduler, vcs
 from app.factory.integrations import smoke_checks
 from app.factory.store import init_db
 
@@ -17,7 +17,16 @@ from app.factory.store import init_db
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     init_db()
     vcs.ensure_gh_available()
-    yield
+    if settings.audit_autostart:
+        # Without this the scheduler sat at "down" and /api/status had no next
+        # audit to report, so the console header showed a countdown that never
+        # counted. An audit loop that has to be started by hand is not a
+        # factory that audits every five minutes.
+        scheduler.start()
+    try:
+        yield
+    finally:
+        await scheduler.stop()
 
 
 app = FastAPI(

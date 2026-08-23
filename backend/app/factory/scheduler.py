@@ -72,13 +72,19 @@ async def stop() -> dict[str, object]:
 
 async def _audit_loop() -> None:
     while True:
-        await run_once()
+        # One bad tick must not kill the loop. Before this, a single failing
+        # audit raised out of the task and the scheduler silently stopped
+        # auditing for the rest of the process's life while status() still
+        # reported it as running until the task object was inspected.
+        try:
+            await run_once()
+        except Exception:  # noqa: BLE001 - recorded on _last_error by run_once
+            pass
         await asyncio.sleep(settings.audit_interval_seconds)
 
 
-async def run_once() -> str:
-    global _last_error, _last_run_id, _last_started_at, _failures
-    _last_started_at = datetime.now(UTC).isoformat()
+def _run_once_blocking() -> str:
+    global _last_error, _last_run_id, _failures
     try:
         cr = engine.run_from_brief(
             brief="Scheduled audit of registered Pulse routes.",
@@ -94,3 +100,26 @@ async def run_once() -> str:
         _failures += 1
         _last_error = str(exc)
         raise
+
+
+async def run_once() -> str:
+    """One audit, off the event loop.
+
+    The body is blocking -- the engine does sync httpx and subprocess work --
+    and running it directly on the scheduler's loop starved that loop for the
+    length of a run. That broke start(): create_task() queues the loop task
+    ahead of the callback that resolves start()'s future, so the first tick ran
+    first and start() timed out after 5s. It only surfaced once Port and SigNoz
+    were configured and a run grew past 5 seconds; before that it fit inside
+    the window by luck. The whole app then failed to boot:
+
+        File "app/factory/scheduler.py", line 43, in start
+            future.result(timeout=5)
+        TimeoutError
+
+    In a worker thread the loop stays free, so start() returns at once, stop()
+    can cancel promptly, and status polls answer while a run is in flight.
+    """
+    global _last_started_at
+    _last_started_at = datetime.now(UTC).isoformat()
+    return await asyncio.to_thread(_run_once_blocking)

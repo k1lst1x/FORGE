@@ -12,6 +12,9 @@ class Settings(BaseSettings):
     cors_origins: list[str] = Field(default_factory=lambda: ["http://localhost:5173"])
     database_path: str = "data/forge.db"
     audit_interval_seconds: int = 60
+    # The factory's headline behaviour is that it audits continuously, so the
+    # loop starts with the app. Set FORGE_AUDIT_AUTOSTART=false to boot idle.
+    audit_autostart: bool = True
     auth_username: str = "admin"
     auth_password: str = "forge-local"
     auth_password_hash: str = ""
