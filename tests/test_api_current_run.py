@@ -19,7 +19,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 @pytest.fixture
 def client(monkeypatch):
     monkeypatch.setattr("forge.scheduler.loop", lambda: _never())
-    from forge.api import app
+    # forge.api was never importable -- app/api.py is shadowed by the
+    # app/api/ package. The module now lives at app/control.py.
+    from forge.control import app
 
     with TestClient(app) as c:
         yield c

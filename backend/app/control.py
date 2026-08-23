@@ -1,11 +1,18 @@
 """
-forge/api.py -- forge-control. The factory as a running service.
+app/control.py -- forge-control. The factory as a running service.
 
 This did not exist, which is why nothing was reachable and everything looked
 simulated. It is the process that owns the scheduler, the intake endpoints, the
 human approval queue and the read APIs the security page renders from.
 
-    python -m forge.api          (or: make up)
+    python -m app.control        (or: make up)
+
+NAMED control.py, NOT api.py. It was app/api.py, which Python could never
+import: the package app/api/ shadows a sibling module of the same name, so
+`from app.api import app` resolved to the package and found no `app`. The
+whole forge-control surface -- the scheduler, the intake endpoints, the
+approval queue -- was unreachable dead code, and nineteen tests errored on
+the import with nothing to say why.
 
 Every intake returns immediately and processes in a background task: a sender
 that waits on a full factory run will time out and retry, and we get duplicate

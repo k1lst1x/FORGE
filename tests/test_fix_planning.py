@@ -402,7 +402,9 @@ def test_the_engine_appends_one_entry_per_attempt(monkeypatch):
 def test_the_api_serves_the_verify_history(monkeypatch):
     from fastapi.testclient import TestClient
 
-    from forge import api
+    # forge.api resolves to the app/api/ PACKAGE, which shadowed the
+    # forge-control module. That module is now app/control.py.
+    from forge import control as api
 
     record = _cr(S2).summary()
     record["verify"] = [
