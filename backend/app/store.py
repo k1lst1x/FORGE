@@ -143,11 +143,28 @@ def last_audit() -> dict | None:
 
 
 # --------------------------------------------------------------- scrapes --
-SCRAPE_DIR = config.REPO_ROOT / "data"
+#: Where the feed is written. The ONE seam for redirecting the scrape store --
+#: tests monkeypatch this to a tmp_path.
+SCRAPE_DIR = config.PROJECT_ROOT / "data"
 
 
 def _scrape_path(watcher: dict) -> Path:
-    return config.PROJECT_ROOT / (watcher.get("output") or "data/books.json")
+    """Resolve the watcher's output path, honouring SCRAPE_DIR.
+
+    Resolved through SCRAPE_DIR rather than straight off PROJECT_ROOT. The
+    scrape tests already redirect store.SCRAPE_DIR to a tmp_path, but this
+    function ignored it and used the project root directly -- so the suite
+    wrote twelve fabricated rows ("Book 0", price 0.5) into the REAL
+    data/books.json and Pulse would have served them as a live product feed.
+    It only looked harmless while the root itself was wrong and every path
+    missed.
+    """
+    output = Path(watcher.get("output") or "data/books.json")
+    if output.is_absolute():
+        return output
+    # Watcher paths are written project-root-relative ("data/books.json"), so
+    # anchor on SCRAPE_DIR's parent to keep that shape while staying patchable.
+    return SCRAPE_DIR.parent / output
 
 
 def write_scrape(watcher: dict, rows: list[dict], contract_ok: bool) -> dict:

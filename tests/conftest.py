@@ -19,8 +19,23 @@ def hermetic_environment(monkeypatch, tmp_path):
     # The in-repo fakes speak the Anthropic wire shape. Tests that exercise the
     # OpenAI backend set this themselves, and their setenv wins over this one.
     monkeypatch.setenv("FORGE_LLM_PROVIDER", "anthropic")
-    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
-    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+
+    # Clear EVERY name llm looks under, not just the bare two. llm reads both
+    # OPENAI_API_KEY and FORGE_OPENAI_API_KEY (same for Anthropic), so deleting
+    # only the unprefixed pair left FORGE_OPENAI_API_KEY standing. provider()
+    # then found credentials for openai, fell back to it, and drove the
+    # Anthropic-shaped fakes down the OpenAI path:
+    #
+    #     'FakeAnthropic' object has no attribute 'chat'
+    #
+    # -- 68 failures that appeared only on a machine with the prefixed keys set,
+    # which is exactly the leak this fixture exists to prevent. Derived from
+    # llm._api_key_names so a new alias cannot reopen the hole.
+    from forge import llm as _llm
+
+    for _provider in ("anthropic", "openai"):
+        for _name in _llm._api_key_names(_provider):
+            monkeypatch.delenv(_name, raising=False)
     monkeypatch.setenv("FORGE_BUDGET_USD", "1000")
     monkeypatch.setenv("FORGE_TRACE_CONSOLE", "0")
 
@@ -59,6 +74,25 @@ def hermetic_environment(monkeypatch, tmp_path):
     llm.reset_budget()
     yield
     llm.reset_budget()
+
+
+@pytest.fixture(scope="session", autouse=True)
+def never_autostart_the_audit_loop():
+    """app.main's lifespan starts the audit loop; a test run must not.
+
+    Session-scoped for the same reason as never_scrape_in_tests below:
+    test_console_wiring builds its TestClient in a module-scoped fixture, which
+    runs before any function-scoped patch could land.
+    """
+    try:
+        from app.core.config import settings
+    except Exception:
+        yield
+        return
+    original = settings.audit_autostart
+    settings.audit_autostart = False
+    yield
+    settings.audit_autostart = original
 
 
 @pytest.fixture(scope="session", autouse=True)
