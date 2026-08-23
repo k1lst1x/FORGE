@@ -10,8 +10,9 @@ logger = logging.getLogger(__name__)
 def ensure_gh_available() -> bool:
     available = shutil.which("gh") is not None
     if not available:
-        logger.warning(
-            "GitHub CLI (gh) is not installed or not on PATH; PR creation will fall back to a local branch URL."
+        logger.error(
+            "GitHub CLI (gh) is not installed or not on PATH; real PR creation is disabled. "
+            "The app will not invent a GitHub URL."
         )
     return available
 
@@ -36,8 +37,8 @@ def commit_and_push(branch: str, message: str) -> str:
 
 def open_pr(branch: str, title: str, body: str) -> str:
     if not ensure_gh_available():
-        slug = title.lower().replace(" ", "-")[:48]
-        return f"https://github.com/k1lst1x/TheAgentHarnessHackathon2026/pull/stub-{branch}-{slug}"
+        logger.error("Real PR creation is unavailable; returning a local-branch handle instead of a fake GitHub URL.")
+        return f"local-branch:{branch}"
 
     try:
         completed = subprocess.run(
@@ -65,11 +66,13 @@ def open_pr(branch: str, title: str, body: str) -> str:
     except (OSError, ValueError) as exc:
         logger.warning("gh pr create could not run: %s", exc)
 
-    slug = title.lower().replace(" ", "-")[:48]
-    return f"https://github.com/k1lst1x/TheAgentHarnessHackathon2026/pull/stub-{branch}-{slug}"
+    return f"local-branch:{branch}"
 
 
 def merge_pr(pr_url: str) -> bool:
     if not pr_url:
+        return False
+    if pr_url.startswith("local-branch:"):
+        logger.warning("PR is not a real GitHub PR; merge is blocked until gh + GitHub auth are configured.")
         return False
     return True
