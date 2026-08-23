@@ -46,9 +46,13 @@ def _emit_sigNoz_span(name: str, run_id: str, trace_id: str | None, duration_ms:
             }
         ]
     }
+    # /v1/traces, NOT /api/v1/traces. The OTLP-over-HTTP path on the SigNoz
+    # ingest host is /v1/traces; /api/v1/traces 404s. httpx does not raise on
+    # a 404, so the old path failed silently and every span was dropped with
+    # nothing in the logs to say so.
     try:
-        httpx.post(
-            f"{settings.signoz_ingest_base_url.rstrip('/')}/api/v1/traces",
+        response = httpx.post(
+            f"{settings.signoz_ingest_base_url.rstrip('/')}/v1/traces",
             json=payload,
             headers={
                 "Content-Type": "application/json",
@@ -56,8 +60,10 @@ def _emit_sigNoz_span(name: str, run_id: str, trace_id: str | None, duration_ms:
             },
             timeout=5.0,
         )
-    except httpx.HTTPError:
-        pass
+        if response.status_code >= 400:
+            print(f"span.export.failed status={response.status_code} name={name}")
+    except httpx.HTTPError as exc:
+        print(f"span.export.error name={name} error={type(exc).__name__}")
 
 
 @contextmanager

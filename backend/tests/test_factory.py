@@ -144,9 +144,12 @@ def test_stage_span_emits_signoz_payload(monkeypatch) -> None:
     monkeypatch.setattr(settings, "signoz_ingestion_key", "test-key")
     monkeypatch.setattr(settings, "signoz_ingest_base_url", "https://ingest.example.com")
 
-    def fake_post(url: str, *, json: dict, headers: dict, timeout: float) -> object:
+    class FakeSpanResponse:
+        status_code = 200
+
+    def fake_post(url: str, *, json: dict, headers: dict, timeout: float) -> FakeSpanResponse:
         calls.append((url, json, headers["signoz-ingestion-key"]))
-        return object()
+        return FakeSpanResponse()
 
     monkeypatch.setattr("app.factory.telemetry.httpx.post", fake_post)
 
@@ -154,6 +157,10 @@ def test_stage_span_emits_signoz_payload(monkeypatch) -> None:
         pass
 
     assert calls
+    # /v1/traces, not /api/v1/traces. The latter 404s on the SigNoz ingest host
+    # and httpx does not raise on it, so the wrong path dropped every span in
+    # silence. Asserted here so the path cannot regress unnoticed.
+    assert calls[0][0] == "https://ingest.example.com/v1/traces"
     assert calls[0][2] == "test-key"
     assert calls[0][1]["resourceSpans"][0]["scopeSpans"][0]["spans"][0]["attributes"][0]["key"] == "run_id"
 
