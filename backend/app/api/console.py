@@ -100,11 +100,28 @@ def _stages_for(detail: FactoryRunDetail) -> dict[str, dict[str, Any]]:
             "status": _STEP_STATUS.get(str(step.status), "pending"),
             "duration_ms": round(duration, 1) if duration is not None else None,
         }
+
+    # A run parked at the human gate is sitting ON the gate, not past it.
+    # The engine's release step does run, but only to record that release is
+    # paused -- so reporting GATE done / RELEASE done is a lie in two ways:
+    # renderGate() only draws the "Waiting for human approval" panel when
+    # GATE is active, so the operator saw a finished-looking pipeline with a
+    # forever-climbing clock and nothing saying what it was waiting for.
+    if detail.status == FactoryRunStatus.awaiting_human:
+        stages["GATE"]["status"] = "active"
+        stages["RELEASE"] = {"status": "pending"}
     return stages
 
 
 def _current_stage(detail: FactoryRunDetail) -> str:
-    """The furthest stage the run has reached, uppercase."""
+    """Where the run actually IS, uppercase.
+
+    Not simply the furthest step executed: a run awaiting a human is stopped at
+    GATE even though the release step ran, because all that step did was record
+    that release is paused.
+    """
+    if detail.status == FactoryRunStatus.awaiting_human:
+        return "GATE"
     reached = [s.name.upper() for s in detail.steps if s.name.upper() in _STAGE_ORDER]
     return reached[-1] if reached else "INTAKE"
 
