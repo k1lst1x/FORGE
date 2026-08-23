@@ -6,6 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.factory import router as factory_router
 from app.api.auth import router as auth_router
+from app.api.console import router as console_router
 from app.core.config import settings
 from app.factory import portal, vcs
 from app.factory.integrations import smoke_checks
@@ -52,3 +53,8 @@ def integrations_health() -> dict[str, object]:
 
 app.include_router(factory_router)
 app.include_router(auth_router)
+
+# The operator console speaks forge-control's /api/* vocabulary, which nothing
+# here serves. Bridged in app/api/console.py -- delete that file and this line
+# once the real forge-control is reachable again.
+app.include_router(console_router)
