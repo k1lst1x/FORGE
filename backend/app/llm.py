@@ -489,6 +489,13 @@ def generate(
     its enum and the planner's changeset in shape. OpenAI gets json_object
     mode, and the callers' own validation covers the rest.
     """
+    # BEFORE the early return, not only inside the fallback loop below. An
+    # injected client skipped the loop entirely and with it the only budget
+    # check, so `generate(..., client=...)` could spend without limit -- which
+    # is the one thing _check_budget exists to prevent. triage.py and
+    # planner.py both pass client=, so the hole was on the live path.
+    _check_budget()
+
     if client is not None:
         return _generate_for_provider(provider(), system, user, max_tokens, model, json_mode, json_schema, client)
 
