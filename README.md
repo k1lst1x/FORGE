@@ -20,6 +20,11 @@
 
 **Zero Downtime Hackathon** · Bright Data Loft, San Francisco · 22 August 2026
 
+Demo access account: 
+
+Email: joe@american.com
+Password: admin@12345
+
 </div>
 
 ---
