@@ -278,6 +278,24 @@ python -m uvicorn pulse.main:app --port 8100 --reload
 open http://localhost:8000/console
 ```
 
+## 🌍 GitHub Pages
+
+The public landing and static operator pages deploy from `frontend/` with GitHub Actions.
+
+One-time repository setting:
+
+1. Open `https://github.com/k1lst1x/FORGE/settings/pages`.
+2. Under **Build and deployment**, set **Source** to **GitHub Actions**.
+3. Push to `main`, or run **Deploy Frontend to GitHub Pages** manually from the Actions tab.
+
+Expected Pages URL:
+
+```text
+https://k1lst1x.github.io/FORGE/
+```
+
+The workflow builds `frontend/dist` with Node.js from `.nvmrc` and uploads only the static artifact to GitHub Pages.
+
 **Try it:**
 
 ```bash
